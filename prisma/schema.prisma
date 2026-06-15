@@ -85,6 +85,7 @@ enum EntityType {
   CLIENT
   MISSION
   CONTRACT
+  CONTRACT_TEMPLATE
   ASSIGNMENT
 }
 
@@ -111,6 +112,7 @@ model User {
   authoredInteractions  CandidateInteraction[] @relation("InteractionAuthor")
   evaluationsGiven      CandidateEvaluation[]  @relation("EvaluationEvaluator")
   missionAmendments     MissionAmendment[]     @relation("MissionAmendmentAuthor")
+  contractAmendments    ContractAmendment[]    @relation("ContractAmendmentAuthor")
   contractValidations   ContractValidation[]   @relation("ContractValidator")
   uploadedDocuments     Document[]             @relation("DocumentUploader")
   notifications         Notification[]
@@ -398,12 +400,15 @@ model ContractAmendment {
   effectiveDate  DateTime
   generatedPdfId String?
   signedPdfId    String?
+  createdById    String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  createdBy User     @relation("ContractAmendmentAuthor", fields: [createdById], references: [id])
 
   @@index([contractId])
+  @@index([createdById])
 }
 
 // ---------------------------------------------------------------------------

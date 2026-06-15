@@ -13,6 +13,8 @@ import { consultantsRouter } from './modules/consultants/consultants.routes.js';
 import { clientsRouter } from './modules/clients/clients.routes.js';
 import { missionsRouter } from './modules/missions/missions.routes.js';
 import { staffingRouter } from './modules/staffing/staffing.routes.js';
+import { contractTemplatesRouter } from './modules/contract-templates/contract-templates.routes.js';
+import { contractsRouter } from './modules/contracts/contracts.routes.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -50,7 +52,8 @@ export function buildApp(): Express {
   app.use('/api/clients', clientsRouter);
   app.use('/api/missions', missionsRouter);
   app.use('/api/staffing', staffingRouter);
-  // Future modules mount here: /api/contracts, ...
+  app.use('/api/contract-templates', contractTemplatesRouter);
+  app.use('/api/contracts', contractsRouter);
 
   // Unknown route -> 404 (handled by central error handler).
   app.use('/api', (_req, _res, next) => {
