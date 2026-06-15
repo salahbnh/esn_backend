@@ -1,6 +1,10 @@
 import type { Request, Response } from 'express';
 import { AppError } from '../../lib/app-error.js';
 import * as service from './consultants.service.js';
+// Controllers may compose foreign SERVICES (no cycle: staffing.service imports
+// consultants.SERVICE, not this controller). The consultant self-view of their
+// own assignments (plan §0a/D6) is served here, delegating to staffing.service.
+import * as staffingService from '../staffing/staffing.service.js';
 import type {
   ListConsultantsQuery,
   PaginationQuery,
@@ -8,6 +12,7 @@ import type {
   UpdateConsultantBody,
   UpdateOwnProfileBody,
 } from './consultants.schema.js';
+import type { OwnAssignmentsQuery } from '../staffing/staffing.schema.js';
 
 /**
  * HTTP layer for the Consultants module. Reads validated input, calls exactly
@@ -65,6 +70,17 @@ export async function updateOwnProfile(req: Request, res: Response): Promise<voi
   const body = req.body as UpdateOwnProfileBody;
   const consultant = await service.updateOwnProfile(actorId(req), body);
   res.status(200).json(consultant);
+}
+
+/**
+ * Consultant self-view of their own assignments (plan §0a/D6). Identity is the
+ * verified `req.user.id`; staffing.service filters by `consultant.userId` at the
+ * repository level — no id is ever read from the request.
+ */
+export async function listOwnAssignments(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as OwnAssignmentsQuery;
+  const result = await staffingService.listOwnAssignments(actorId(req), query);
+  res.status(200).json(result);
 }
 
 // ---------------------------------------------------------------------------

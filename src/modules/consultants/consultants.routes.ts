@@ -13,6 +13,7 @@ import {
   UpdateConsultantBodySchema,
   UpdateOwnProfileBodySchema,
 } from './consultants.schema.js';
+import { OwnAssignmentsQuerySchema } from '../staffing/staffing.schema.js';
 
 /**
  * Consultants routes — mounted at /api/consultants.
@@ -21,6 +22,7 @@ import {
  * GET    /                  RH, MANAGER, DIRECTION
  * GET    /me                CONSULTANT
  * PATCH  /me                CONSULTANT
+ * GET    /me/assignments    CONSULTANT (own assignments; delegates to staffing.service)
  * GET    /:id               RH, MANAGER, DIRECTION
  * PATCH  /:id               RH, DIRECTION
  * PATCH  /:id/status        RH, MANAGER, DIRECTION
@@ -56,6 +58,15 @@ consultantsRouter.patch(
   rbac('CONSULTANT'),
   validate({ body: UpdateOwnProfileBodySchema }),
   asyncHandler(controller.updateOwnProfile),
+);
+
+// Consultant self-view of their own assignments (plan §0a/D6). Declared with the
+// `/me` routes, BEFORE `/:id`, so "me" is never matched as a CUID id param.
+consultantsRouter.get(
+  '/me/assignments',
+  rbac('CONSULTANT'),
+  validate({ query: OwnAssignmentsQuerySchema }),
+  asyncHandler(controller.listOwnAssignments),
 );
 
 // --- Detail + admin update -------------------------------------------------

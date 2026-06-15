@@ -1,4 +1,4 @@
-import type { Consultant, ConsultantStatus } from '@prisma/client';
+import type { Consultant, ConsultantStatus, Prisma } from '@prisma/client';
 import { AppError } from '../../lib/app-error.js';
 import * as repo from './consultants.repository.js';
 import type { Pagination } from './consultants.repository.js';
@@ -89,6 +89,15 @@ export async function getOwnProfile(userId: string) {
 }
 
 /**
+ * Existence pre-check for foreign modules (e.g. the Staffing assignment-create
+ * guard). Exposed as a SERVICE function so callers go through the service layer
+ * rather than reaching into the consultants repository directly.
+ */
+export function consultantExists(id: string): Promise<boolean> {
+  return repo.consultantExists(id);
+}
+
+/**
  * Resolves the owning `User.id` for the consultant targeted by `id` (the route
  * param), or null if it cannot be resolved. Used by the declarative ownership
  * gate on `GET /:id/documents`. Never trusts the body — resolved from the DB.
@@ -166,10 +175,10 @@ export async function changeStatus(
 ): Promise<Consultant> {
   const consultant = await loadConsultantOr404(id);
 
-  // TODO(staffing): setStatusOnMission/setStatusAvailable hook — the future
-  // Staffing module calls into this service (not over HTTP) when an Assignment
-  // activates/ends so status stays in sync. This service remains the single
-  // writer of Consultant.status.
+  // NOTE: the programmatic status writes driven by the Staffing module live in
+  // `setConsultantOnMission` / `setConsultantIntercontratIfIdle` below (called
+  // inside staffing's $transaction). This user-driven path keeps enforcing the
+  // interactive state machine.
   const allowed = ALLOWED_STATUS_TRANSITIONS[consultant.status];
   if (!allowed.includes(toStatus)) {
     throw AppError.badRequest(
@@ -187,6 +196,90 @@ export async function changeStatus(
     payload: { from: consultant.status, to: toStatus, comment: comment ?? null },
   });
   return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-module hooks (called by staffing.service inside its $transaction)
+//
+// These are PROGRAMMATIC status writes driven by assignment lifecycle events.
+// They deliberately BYPASS the user-facing `ALLOWED_STATUS_TRANSITIONS` state
+// machine (which guards interactive `changeStatus`) — the assignment lifecycle
+// is the authority here. This service remains the single writer of
+// `Consultant.status`; staffing never touches the consultant table directly.
+// ---------------------------------------------------------------------------
+
+/**
+ * Set the consultant to ON_MISSION when one of their assignments activates.
+ * Idempotent: a no-op (no write, no audit) if already ON_MISSION.
+ */
+export async function setConsultantOnMission(
+  consultantId: string,
+  actorId: string,
+  tx: Prisma.TransactionClient,
+): Promise<void> {
+  const consultant = await repo.findConsultantStatusTx(consultantId, tx);
+  if (!consultant) {
+    throw AppError.notFound('Consultant not found');
+  }
+  if (consultant.status === 'ON_MISSION') {
+    return; // idempotent
+  }
+  await repo.updateConsultantStatusTx(consultantId, 'ON_MISSION', tx);
+  await repo.writeAuditLog(
+    {
+      entityType: 'CONSULTANT',
+      entityId: consultantId,
+      action: 'STATUS_CHANGE',
+      actorId,
+      payload: { from: consultant.status, to: 'ON_MISSION', via: 'assignment' },
+    },
+    tx,
+  );
+}
+
+/**
+ * When an assignment ENDS: if the consultant has NO other ACTIVE assignment,
+ * move them to INTERCONTRAT (the bench / idle-cost status — D3, NOT AVAILABLE).
+ * No-op if they still have an ACTIVE assignment, or are already INTERCONTRAT.
+ *
+ * NOTE: this hook runs AFTER the ending assignment's status is already written
+ * to ENDED inside the same transaction, so the ended assignment no longer
+ * counts as ACTIVE — no exclusion id is required.
+ *
+ * @remarks Call-order invariant: this MUST be called AFTER the ending
+ * assignment has been set to ENDED within the SAME `tx`. Otherwise the
+ * just-ended assignment would still be counted as ACTIVE by
+ * `countActiveAssignmentsTx`, and the consultant would wrongly be left
+ * ON_MISSION. This is precisely why no exclude-id is passed to the count.
+ * @requires the ending assignment is already ENDED in `tx`.
+ */
+export async function setConsultantIntercontratIfIdle(
+  consultantId: string,
+  actorId: string,
+  tx: Prisma.TransactionClient,
+): Promise<void> {
+  const consultant = await repo.findConsultantStatusTx(consultantId, tx);
+  if (!consultant) {
+    throw AppError.notFound('Consultant not found');
+  }
+  if (consultant.status === 'INTERCONTRAT') {
+    return; // idempotent
+  }
+  const activeCount = await repo.countActiveAssignmentsTx(consultantId, undefined, tx);
+  if (activeCount > 0) {
+    return; // still on at least one active assignment — leave status untouched
+  }
+  await repo.updateConsultantStatusTx(consultantId, 'INTERCONTRAT', tx);
+  await repo.writeAuditLog(
+    {
+      entityType: 'CONSULTANT',
+      entityId: consultantId,
+      action: 'STATUS_CHANGE',
+      actorId,
+      payload: { from: consultant.status, to: 'INTERCONTRAT', via: 'assignment' },
+    },
+    tx,
+  );
 }
 
 // ---------------------------------------------------------------------------

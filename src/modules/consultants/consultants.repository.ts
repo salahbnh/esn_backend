@@ -201,6 +201,48 @@ export function updateConsultantStatus(
 }
 
 // ---------------------------------------------------------------------------
+// Transaction-aware helpers (used by staffing.service's cross-module $transaction)
+// ---------------------------------------------------------------------------
+
+/** Fetch just a consultant's current status (for the staffing hooks), tx-aware. */
+export async function findConsultantStatusTx(
+  id: string,
+  tx?: Prisma.TransactionClient,
+): Promise<{ status: ConsultantStatus } | null> {
+  const db = tx ?? prisma;
+  return db.consultant.findUnique({ where: { id }, select: { status: true } });
+}
+
+/** Status update that can participate in a caller-supplied transaction. */
+export function updateConsultantStatusTx(
+  id: string,
+  status: ConsultantStatus,
+  tx?: Prisma.TransactionClient,
+): Promise<Consultant> {
+  const db = tx ?? prisma;
+  return db.consultant.update({ where: { id }, data: { status } });
+}
+
+/**
+ * Counts a consultant's ACTIVE assignments, optionally excluding one assignment
+ * id (e.g. the one being ended). Used to decide the INTERCONTRAT-if-idle hook.
+ */
+export function countActiveAssignmentsTx(
+  consultantId: string,
+  excludeAssignmentId: string | undefined,
+  tx?: Prisma.TransactionClient,
+): Promise<number> {
+  const db = tx ?? prisma;
+  return db.assignment.count({
+    where: {
+      consultantId,
+      status: 'ACTIVE',
+      ...(excludeAssignmentId ? { id: { not: excludeAssignmentId } } : {}),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Documents metadata (NO storageKey)
 // ---------------------------------------------------------------------------
 
@@ -230,6 +272,10 @@ export async function listConsultantDocuments(
 // Audit (non-transactional, best-effort for standalone mutations)
 // ---------------------------------------------------------------------------
 
-export function writeAuditLog(entry: AuditLogData): Promise<unknown> {
-  return prisma.auditLog.create({ data: entry });
+export async function writeAuditLog(
+  entry: AuditLogData,
+  tx?: Prisma.TransactionClient,
+): Promise<void> {
+  const db = tx ?? prisma;
+  await db.auditLog.create({ data: entry });
 }

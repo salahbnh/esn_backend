@@ -10,6 +10,9 @@ import { errorHandler } from './middleware/error.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { recruitmentRouter } from './modules/recruitment/recruitment.routes.js';
 import { consultantsRouter } from './modules/consultants/consultants.routes.js';
+import { clientsRouter } from './modules/clients/clients.routes.js';
+import { missionsRouter } from './modules/missions/missions.routes.js';
+import { staffingRouter } from './modules/staffing/staffing.routes.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -44,7 +47,10 @@ export function buildApp(): Express {
   app.use('/api/health', healthRouter);
   app.use('/api/candidates', recruitmentRouter);
   app.use('/api/consultants', consultantsRouter);
-  // Future modules mount here: /api/missions, ...
+  app.use('/api/clients', clientsRouter);
+  app.use('/api/missions', missionsRouter);
+  app.use('/api/staffing', staffingRouter);
+  // Future modules mount here: /api/contracts, ...
 
   // Unknown route -> 404 (handled by central error handler).
   app.use('/api', (_req, _res, next) => {

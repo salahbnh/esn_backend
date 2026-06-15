@@ -82,8 +82,10 @@ enum DocumentType {
 enum EntityType {
   CANDIDATE
   CONSULTANT
+  CLIENT
   MISSION
   CONTRACT
+  ASSIGNMENT
 }
 
 // ---------------------------------------------------------------------------
