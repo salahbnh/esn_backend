@@ -1,9 +1,12 @@
 node_modules
 dist
-.env
-.env.local
 coverage
 *.log
+
+# env files — never commit real env; keep the example
+.env
+.env.*
+!.env.example
 
 # Claude Code harness & design docs — live in the parent workspace, never track them here
 CLAUDE.md
