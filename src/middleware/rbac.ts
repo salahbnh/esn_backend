@@ -50,3 +50,16 @@ export function requireOwnership(resolver: OwnershipResolver): RequestHandler {
     })().catch(next);
   };
 }
+
+/**
+ * Declarative ownership gate scoped to a single role. The enclosing `rbac(...)`
+ * has already gated which roles may reach the route; this enforces ownership
+ * ONLY for `role` (e.g. CONSULTANT), letting the other allowed roles through
+ * untouched. Compose AFTER `rbac` and BEFORE `validate`.
+ */
+export function requireOwnershipFor(role: Role, resolver: OwnershipResolver): RequestHandler {
+  return (req, res, next) => {
+    if (req.user?.role !== role) return next(); // ownership applies only to this role; rbac() gated the rest
+    return requireOwnership(resolver)(req, res, next);
+  };
+}
