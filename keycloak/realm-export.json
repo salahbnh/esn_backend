@@ -1,0 +1,120 @@
+{
+  "realm": "esn",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "accessTokenLifespan": 1800,
+  "roles": {
+    "realm": [
+      { "name": "RH", "description": "Human resources: recruitment, consultant files, contracts, document, initiates contract validation" },
+      { "name": "MANAGER", "description": "Manager / Business Manager: missions, staffing, validates contracts (step 2), reporting" },
+      { "name": "DIRECTION", "description": "Direction: consolidated view, final contract validation (step 3), all KPIs" },
+      { "name": "CONSULTANT", "description": "Consultant: own profile, own missions, own documents" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "esn-frontend",
+      "name": "ESN Frontend (Next.js)",
+      "description": "Public SPA client using OIDC Authorization Code + PKCE (S256).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "rootUrl": "http://localhost:3000",
+      "baseUrl": "http://localhost:3000",
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      },
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    },
+    {
+      "clientId": "esn-backend",
+      "name": "ESN Backend API",
+      "description": "Confidential client representing the API audience. The frontend's tokens target audience 'account' by default; this client exists so the API can be addressed explicitly if desired.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "esn-backend-dev-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "bearerOnly": false,
+      "fullScopeAllowed": true
+    }
+  ],
+  "users": [
+    {
+      "username": "rh@esn.local",
+      "email": "rh@esn.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Rita",
+      "lastName": "RH",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["RH"]
+    },
+    {
+      "username": "manager@esn.local",
+      "email": "manager@esn.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Marc",
+      "lastName": "Manager",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["MANAGER"]
+    },
+    {
+      "username": "direction@esn.local",
+      "email": "direction@esn.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Diana",
+      "lastName": "Direction",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["DIRECTION"]
+    },
+    {
+      "username": "consultant@esn.local",
+      "email": "consultant@esn.local",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Carl",
+      "lastName": "Consultant",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["CONSULTANT"]
+    }
+  ]
+}

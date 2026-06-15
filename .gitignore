@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.local
+coverage
+*.log
+
+# Claude Code harness & design docs — live in the parent workspace, never track them here
+CLAUDE.md
+AGENTS.md
+.claude/
+.cursor/
+docs/
+.mcp.json

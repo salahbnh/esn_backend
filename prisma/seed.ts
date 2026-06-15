@@ -1,0 +1,105 @@
+import { PrismaClient, Role } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+/**
+ * Idempotent dev seed: referential skills, one contract template, and one
+ * dev User per role. keycloakId values are placeholders — replace them with
+ * the real Keycloak `sub` once the realm is provisioned.
+ */
+async function main(): Promise<void> {
+  // --- Referential skills ---
+  const skills = [
+    { name: 'TypeScript', category: 'Frontend' },
+    { name: 'Node.js', category: 'Backend' },
+    { name: 'React', category: 'Frontend' },
+    { name: 'PostgreSQL', category: 'Database' },
+    { name: 'AWS', category: 'Cloud' },
+    { name: 'Project Management', category: 'Soft Skills' },
+  ];
+
+  for (const skill of skills) {
+    await prisma.skill.upsert({
+      where: { name: skill.name },
+      update: { category: skill.category },
+      create: skill,
+    });
+  }
+
+  // --- Contract template ---
+  await prisma.contractTemplate.upsert({
+    where: { id: 'tmpl-cdi-default' },
+    update: {},
+    create: {
+      id: 'tmpl-cdi-default',
+      name: 'CDI standard',
+      body: [
+        'CONTRAT DE TRAVAIL À DURÉE INDÉTERMINÉE',
+        '',
+        'Entre la société ESN et {{firstName}} {{lastName}},',
+        'au poste de {{position}}, à compter du {{startDate}}.',
+        'Rémunération de référence (TJM): {{tjm}}.',
+      ].join('\n'),
+      isActive: true,
+    },
+  });
+
+  // --- Dev users: one per role ---
+  const devUsers: Array<{
+    keycloakId: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    role: Role;
+  }> = [
+    {
+      keycloakId: 'dev-rh-sub',
+      email: 'rh@esn.local',
+      firstName: 'Rachel',
+      lastName: 'RH',
+      role: Role.RH,
+    },
+    {
+      keycloakId: 'dev-manager-sub',
+      email: 'manager@esn.local',
+      firstName: 'Marc',
+      lastName: 'Manager',
+      role: Role.MANAGER,
+    },
+    {
+      keycloakId: 'dev-direction-sub',
+      email: 'direction@esn.local',
+      firstName: 'Diane',
+      lastName: 'Direction',
+      role: Role.DIRECTION,
+    },
+    {
+      keycloakId: 'dev-consultant-sub',
+      email: 'consultant@esn.local',
+      firstName: 'Camille',
+      lastName: 'Consultant',
+      role: Role.CONSULTANT,
+    },
+  ];
+
+  for (const user of devUsers) {
+    await prisma.user.upsert({
+      where: { keycloakId: user.keycloakId },
+      update: { email: user.email, role: user.role },
+      create: user,
+    });
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('Seed complete: %d skills, 1 template, %d users.', skills.length, devUsers.length);
+}
+
+main()
+  .catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error(err);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

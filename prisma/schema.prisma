@@ -1,0 +1,462 @@
+// Prisma schema for the ESN resource-management app.
+// SOURCE OF TRUTH: docs/data-model.md — keep this file in sync with it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  RH
+  MANAGER
+  DIRECTION
+  CONSULTANT
+}
+
+enum CandidateStatus {
+  APPLIED
+  INTERVIEW
+  VALIDATED
+  REJECTED
+  HIRED
+}
+
+enum ConsultantStatus {
+  INTERCONTRAT
+  ON_MISSION
+  AVAILABLE
+}
+
+enum MissionStatus {
+  DRAFT
+  STAFFED
+  IN_PROGRESS
+  CLOSED
+  ARCHIVED
+}
+
+enum AssignmentStatus {
+  PROPOSED
+  CONFIRMED
+  ACTIVE
+  ENDED
+}
+
+enum ContractStatus {
+  DRAFT
+  INTERNAL_VALIDATION
+  PENDING_SIGNATURE
+  SIGNED
+  ARCHIVED
+}
+
+enum ValidationStep {
+  RH
+  MANAGER
+  DIRECTION
+}
+
+enum ValidationState {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DocumentType {
+  CV
+  CONTRACT
+  CONTRACT_AMENDMENT
+  PROPOSAL
+  MISSION_DOC
+  OTHER
+}
+
+enum EntityType {
+  CANDIDATE
+  CONSULTANT
+  MISSION
+  CONTRACT
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+/// App account, mirrors a Keycloak subject. Source of identity + role.
+model User {
+  id         String   @id @default(cuid())
+  keycloakId String   @unique
+  email      String   @unique
+  firstName  String
+  lastName   String
+  role       Role
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // 1:1 — a CONSULTANT user maps to a Consultant profile
+  consultant Consultant?
+
+  // Reverse relations for authored / actor links
+  authoredInteractions  CandidateInteraction[] @relation("InteractionAuthor")
+  evaluationsGiven      CandidateEvaluation[]  @relation("EvaluationEvaluator")
+  missionAmendments     MissionAmendment[]     @relation("MissionAmendmentAuthor")
+  contractValidations   ContractValidation[]   @relation("ContractValidator")
+  uploadedDocuments     Document[]             @relation("DocumentUploader")
+  notifications         Notification[]
+
+  @@index([role])
+}
+
+// ---------------------------------------------------------------------------
+// Referential
+// ---------------------------------------------------------------------------
+
+/// Referential competence shared across the domain.
+model Skill {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  category  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Implicit many-to-many relations
+  candidates  Candidate[]
+  consultants Consultant[]
+  missions    Mission[]
+}
+
+// ---------------------------------------------------------------------------
+// Recruitment / ATS
+// ---------------------------------------------------------------------------
+
+model Candidate {
+  id             String          @id @default(cuid())
+  firstName      String
+  lastName       String
+  email          String
+  phone          String?
+  status         CandidateStatus @default(APPLIED)
+  source         String?
+  targetPosition String?
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  skills       Skill[]
+  interactions CandidateInteraction[]
+  evaluations  CandidateEvaluation[]
+  proposals    Proposal[]
+
+  // Set when the candidate is HIRED and converted to a Consultant
+  consultant Consultant?
+
+  @@index([status])
+  @@index([email])
+}
+
+/// historique des échanges
+model CandidateInteraction {
+  id          String   @id @default(cuid())
+  candidateId String
+  type        String // CALL / EMAIL / INTERVIEW / NOTE
+  occurredAt  DateTime
+  summary     String
+  authorId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  author    User      @relation("InteractionAuthor", fields: [authorId], references: [id])
+
+  @@index([candidateId])
+  @@index([authorId])
+}
+
+/// évaluation des candidats
+model CandidateEvaluation {
+  id             String   @id @default(cuid())
+  candidateId    String
+  evaluatorId    String
+  criteria       Json // per-criterion scores
+  overallScore   Int
+  recommendation String?
+  comment        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  evaluator User      @relation("EvaluationEvaluator", fields: [evaluatorId], references: [id])
+
+  @@index([candidateId])
+  @@index([evaluatorId])
+}
+
+/// génération de proposition
+model Proposal {
+  id          String   @id @default(cuid())
+  candidateId String
+  status      String // DRAFT / SENT / ACCEPTED / DECLINED
+  content     Json // offer terms
+  documentId  String? // generated PDF in storage
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Consultants
+// ---------------------------------------------------------------------------
+
+/// fiche consultant centralisée
+model Consultant {
+  id               String           @id @default(cuid())
+  userId           String           @unique
+  position         String
+  tjm              Decimal?         @db.Decimal(10, 2)
+  status           ConsultantStatus @default(AVAILABLE)
+  hireDate         DateTime?
+  availabilityDate DateTime?
+  seniority        String?
+  bio              String?
+  candidateId      String?          @unique
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  user            User         @relation(fields: [userId], references: [id])
+  candidateOrigin Candidate?   @relation(fields: [candidateId], references: [id])
+  skills          Skill[]
+  assignments     Assignment[]
+  contracts       Contract[]
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Clients & Missions
+// ---------------------------------------------------------------------------
+
+model Client {
+  id           String   @id @default(cuid())
+  name         String
+  industry     String?
+  contactName  String?
+  contactEmail String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  missions Mission[]
+
+  @@index([name])
+}
+
+/// Gestion des missions
+model Mission {
+  id          String        @id @default(cuid())
+  clientId    String
+  project     String
+  role        String
+  description String?
+  startDate   DateTime
+  endDate     DateTime?
+  tjm         Decimal       @db.Decimal(10, 2)
+  status      MissionStatus @default(DRAFT)
+  archivedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  client         Client             @relation(fields: [clientId], references: [id])
+  requiredSkills Skill[]
+  assignments    Assignment[]
+  amendments     MissionAmendment[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+/// Staffing / Affectation — consultant <-> mission
+model Assignment {
+  id            String           @id @default(cuid())
+  missionId     String
+  consultantId  String
+  roleOnMission String?
+  startDate     DateTime
+  endDate       DateTime?
+  allocationPct Int              @default(100)
+  status        AssignmentStatus @default(PROPOSED)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  mission    Mission    @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  consultant Consultant @relation(fields: [consultantId], references: [id])
+
+  @@index([consultantId, status])
+  @@index([missionId])
+}
+
+/// avenant de mission
+model MissionAmendment {
+  id            String   @id @default(cuid())
+  missionId     String
+  reason        String
+  changes       Json // before/after deltas
+  effectiveDate DateTime
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  mission   Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("MissionAmendmentAuthor", fields: [createdById], references: [id])
+
+  @@index([missionId])
+  @@index([createdById])
+}
+
+// ---------------------------------------------------------------------------
+// Contracts
+// ---------------------------------------------------------------------------
+
+model ContractTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  body      String // template with {{placeholders}}
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contracts Contract[]
+
+  @@index([isActive])
+}
+
+/// Gestion des contrats de travail
+model Contract {
+  id             String         @id @default(cuid())
+  consultantId   String
+  templateId     String?
+  type           String // CDI / CDD / etc.
+  status         ContractStatus @default(DRAFT)
+  prefilledData  Json // auto-filled from Consultant
+  generatedPdfId String? // generated PDF
+  signedPdfId    String? // uploaded signed PDF
+  startDate      DateTime?
+  endDate        DateTime?
+  archivedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  consultant  Consultant           @relation(fields: [consultantId], references: [id])
+  template    ContractTemplate?    @relation(fields: [templateId], references: [id])
+  validations ContractValidation[]
+  amendments  ContractAmendment[]
+
+  @@index([consultantId])
+  @@index([templateId])
+  @@index([status])
+}
+
+/// workflow RH -> Manager -> Direction
+model ContractValidation {
+  id          String          @id @default(cuid())
+  contractId  String
+  step        ValidationStep
+  state       ValidationState @default(PENDING)
+  validatorId String?
+  decidedAt   DateTime?
+  comment     String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  validator User?    @relation("ContractValidator", fields: [validatorId], references: [id])
+
+  @@unique([contractId, step])
+  @@index([contractId])
+  @@index([validatorId])
+  @@index([state])
+}
+
+/// avenant contractuel
+model ContractAmendment {
+  id             String   @id @default(cuid())
+  contractId     String
+  reason         String
+  changes        Json
+  effectiveDate  DateTime
+  generatedPdfId String?
+  signedPdfId    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting: Documents, Audit, Notifications
+// ---------------------------------------------------------------------------
+
+/// Stockage centralisé — metadata only (bytes live in MinIO/S3)
+model Document {
+  id           String       @id @default(cuid())
+  type         DocumentType
+  entityType   EntityType
+  entityId     String // polymorphic link
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String       @unique
+  uploadedById String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  uploadedBy User @relation("DocumentUploader", fields: [uploadedById], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([uploadedById])
+  @@index([type])
+}
+
+/// historisation / historique / alertes
+model AuditLog {
+  id         String     @id @default(cuid())
+  entityType EntityType
+  entityId   String
+  action     String // CREATE / UPDATE / STATUS_CHANGE / ...
+  actorId    String?
+  payload    Json // diff / details
+  createdAt  DateTime   @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+}
+
+/// workflow notifications RH / alertes
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
