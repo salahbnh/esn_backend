@@ -64,11 +64,12 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
       "bearerOnly": false,
-      "fullScopeAllowed": true
+      "fullScopeAllowed": false
     }
   ],
   "users": [
     {
+      "id": "11111111-1111-1111-1111-111111111111",
       "username": "rh@esn.local",
       "email": "rh@esn.local",
       "emailVerified": true,
@@ -81,6 +82,7 @@
       "realmRoles": ["RH"]
     },
     {
+      "id": "22222222-2222-2222-2222-222222222222",
       "username": "manager@esn.local",
       "email": "manager@esn.local",
       "emailVerified": true,
@@ -93,6 +95,7 @@
       "realmRoles": ["MANAGER"]
     },
     {
+      "id": "33333333-3333-3333-3333-333333333333",
       "username": "direction@esn.local",
       "email": "direction@esn.local",
       "emailVerified": true,
@@ -105,6 +108,7 @@
       "realmRoles": ["DIRECTION"]
     },
     {
+      "id": "44444444-4444-4444-4444-444444444444",
       "username": "consultant@esn.local",
       "email": "consultant@esn.local",
       "emailVerified": true,
@@ -115,6 +119,14 @@
         { "type": "password", "value": "password", "temporary": false }
       ],
       "realmRoles": ["CONSULTANT"]
+    },
+    {
+      "username": "service-account-esn-backend",
+      "enabled": true,
+      "serviceAccountClientId": "esn-backend",
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users"]
+      }
     }
   ]
 }

@@ -142,7 +142,7 @@ model Candidate {
   id             String          @id @default(cuid())
   firstName      String
   lastName       String
-  email          String
+  email          String          @unique
   phone          String?
   status         CandidateStatus @default(APPLIED)
   source         String?
@@ -160,7 +160,6 @@ model Candidate {
   consultant Consultant?
 
   @@index([status])
-  @@index([email])
 }
 
 /// historique des échanges

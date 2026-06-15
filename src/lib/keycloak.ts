@@ -35,6 +35,7 @@ function getSigningKey(header: JwtHeader, callback: SigningKeyCallback): void {
 export interface KeycloakClaims extends jwt.JwtPayload {
   sub: string;
   email?: string;
+  email_verified?: boolean;
   given_name?: string;
   family_name?: string;
   preferred_username?: string;

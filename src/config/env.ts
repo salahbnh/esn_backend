@@ -18,6 +18,17 @@ const envSchema = z.object({
   KEYCLOAK_JWKS_URI: z.string().url(),
   KEYCLOAK_AUDIENCE: z.string().min(1),
 
+  // Keycloak Admin API (auto-provisioning consultant accounts on conversion)
+  KEYCLOAK_BASE_URL: z.string().url(),
+  KEYCLOAK_REALM: z.string().min(1),
+  KEYCLOAK_ADMIN_CLIENT_ID: z.string().min(1),
+  KEYCLOAK_ADMIN_CLIENT_SECRET: z.string().min(1),
+  // When true (prod with SMTP configured), email the set-password/verify invite.
+  KEYCLOAK_INVITE_EMAIL: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   S3_ENDPOINT: z.string().url(),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),

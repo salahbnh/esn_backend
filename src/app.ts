@@ -8,6 +8,7 @@ import { logger } from './lib/logger.js';
 import { AppError } from './lib/app-error.js';
 import { errorHandler } from './middleware/error.js';
 import { healthRouter } from './modules/health/health.routes.js';
+import { recruitmentRouter } from './modules/recruitment/recruitment.routes.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -40,7 +41,8 @@ export function buildApp(): Express {
 
   // Routes.
   app.use('/api/health', healthRouter);
-  // Future modules mount here: /api/recruitment, /api/consultants, ...
+  app.use('/api/candidates', recruitmentRouter);
+  // Future modules mount here: /api/consultants, ...
 
   // Unknown route -> 404 (handled by central error handler).
   app.use('/api', (_req, _res, next) => {

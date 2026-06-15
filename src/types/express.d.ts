@@ -2,10 +2,11 @@ import type { Role } from '@prisma/client';
 
 /**
  * Authenticated principal attached by the auth middleware.
- * `id` is the local User.id (null if the verified subject has no User row yet).
+ * `id` is the local User.id — always set (the auth middleware JIT-provisions
+ * a User row from the verified token if one does not yet exist).
  */
 export interface AuthUser {
-  id: string | null;
+  id: string;
   role: Role;
   keycloakId: string;
 }

@@ -52,31 +52,33 @@ async function main(): Promise<void> {
     lastName: string;
     role: Role;
   }> = [
+    // keycloakId values MUST match the fixed user ids in keycloak/realm-export.json
+    // so a dev login's token `sub` maps to the seeded User row.
     {
-      keycloakId: 'dev-rh-sub',
+      keycloakId: '11111111-1111-1111-1111-111111111111',
       email: 'rh@esn.local',
-      firstName: 'Rachel',
+      firstName: 'Rita',
       lastName: 'RH',
       role: Role.RH,
     },
     {
-      keycloakId: 'dev-manager-sub',
+      keycloakId: '22222222-2222-2222-2222-222222222222',
       email: 'manager@esn.local',
       firstName: 'Marc',
       lastName: 'Manager',
       role: Role.MANAGER,
     },
     {
-      keycloakId: 'dev-direction-sub',
+      keycloakId: '33333333-3333-3333-3333-333333333333',
       email: 'direction@esn.local',
-      firstName: 'Diane',
+      firstName: 'Diana',
       lastName: 'Direction',
       role: Role.DIRECTION,
     },
     {
-      keycloakId: 'dev-consultant-sub',
+      keycloakId: '44444444-4444-4444-4444-444444444444',
       email: 'consultant@esn.local',
-      firstName: 'Camille',
+      firstName: 'Carl',
       lastName: 'Consultant',
       role: Role.CONSULTANT,
     },
