@@ -2,6 +2,10 @@ import type { ContractTemplate } from '@prisma/client';
 import { AppError } from '../../lib/app-error.js';
 import * as repo from './contract-templates.repository.js';
 import type { Pagination } from './contract-templates.repository.js';
+import {
+  parseTemplatePlaceholders,
+  type TemplatePlaceholder,
+} from './template-placeholders.js';
 import type {
   CreateTemplateBody,
   ListTemplatesQuery,
@@ -47,8 +51,18 @@ export async function listTemplates(
   return paginated(items, total, query.page, query.pageSize);
 }
 
-export function getTemplate(id: string): Promise<ContractTemplate> {
-  return loadTemplateOr404(id);
+export interface TemplateDetail extends ContractTemplate {
+  placeholders: TemplatePlaceholder[];
+}
+
+/**
+ * Template detail with the placeholders introspected from its body. The
+ * frontend builds the RH input form (auto vs manual) from `placeholders`, so
+ * new templates need no code change.
+ */
+export async function getTemplate(id: string): Promise<TemplateDetail> {
+  const template = await loadTemplateOr404(id);
+  return { ...template, placeholders: parseTemplatePlaceholders(template.body) };
 }
 
 export async function createTemplate(

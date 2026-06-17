@@ -18,6 +18,8 @@ export const CreateContractBodySchema = z
     type: z.string().min(1),
     startDate: z.string().datetime().optional(),
     endDate: z.string().datetime().optional(),
+    // RH-entered manual placeholder values (placeholder name -> value).
+    fields: z.record(z.string(), z.string().min(1)).optional(),
   })
   .strict();
 
@@ -26,6 +28,8 @@ export const UpdateContractBodySchema = z
     type: z.string().min(1).optional(),
     startDate: z.string().datetime().optional(),
     endDate: z.string().datetime().optional(),
+    // RH-entered manual placeholder values (placeholder name -> value).
+    fields: z.record(z.string(), z.string().min(1)).optional(),
   })
   .strict();
 

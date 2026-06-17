@@ -26,6 +26,7 @@ import {
  * PATCH  /:id               RH, DIRECTION (DRAFT only)
  * PATCH  /:id/submit        RH, DIRECTION
  * PATCH  /:id/validate      RH, MANAGER, DIRECTION (step→role gate in service)
+ * POST   /:id/generate-pdf  RH, DIRECTION (in-app PDF; guarded ready + complete)
  * PATCH  /:id/sign          RH, DIRECTION
  * PATCH  /:id/archive       RH, DIRECTION
  * POST   /:id/amendments    RH, DIRECTION
@@ -85,6 +86,13 @@ contractsRouter.patch(
   rbac('RH', 'MANAGER', 'DIRECTION'),
   validate({ params: IdParamSchema, body: ValidateStepBodySchema }),
   asyncHandler(controller.validateContract),
+);
+
+contractsRouter.post(
+  '/:id/generate-pdf',
+  rbac('RH', 'DIRECTION'),
+  validate({ params: IdParamSchema }),
+  asyncHandler(controller.generateContractPdf),
 );
 
 contractsRouter.patch(

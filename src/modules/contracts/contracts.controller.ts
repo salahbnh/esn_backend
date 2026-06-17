@@ -102,6 +102,11 @@ export async function archiveContract(req: Request, res: Response): Promise<void
   res.status(200).json(contract);
 }
 
+export async function generateContractPdf(req: Request, res: Response): Promise<void> {
+  const result = await service.generateContractPdf(param(req, 'id'), actorId(req));
+  res.status(201).json(result);
+}
+
 // ---------------------------------------------------------------------------
 // Amendments
 // ---------------------------------------------------------------------------

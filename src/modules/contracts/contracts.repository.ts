@@ -3,6 +3,7 @@ import type {
   ContractAmendment,
   ContractStatus,
   ContractValidation,
+  DocumentType,
   EntityType,
   Prisma,
   ValidationStep,
@@ -44,6 +45,7 @@ export interface UpdateContractData {
   type?: string;
   startDate?: Date;
   endDate?: Date;
+  prefilledData?: Prisma.InputJsonValue;
 }
 
 export interface CreateAmendmentData {
@@ -206,6 +208,7 @@ export function updateContract(id: string, data: UpdateContractData) {
       ...(data.type !== undefined ? { type: data.type } : {}),
       ...(data.startDate !== undefined ? { startDate: data.startDate } : {}),
       ...(data.endDate !== undefined ? { endDate: data.endDate } : {}),
+      ...(data.prefilledData !== undefined ? { prefilledData: data.prefilledData } : {}),
     },
     include: CONSULTANT_DETAIL_INCLUDE,
   });
@@ -359,6 +362,82 @@ export function processValidationStep(
 }
 
 // ---------------------------------------------------------------------------
+// Store a generated PDF — Document row + generatedPdfId pointer + audit, atomic
+// ---------------------------------------------------------------------------
+
+export interface StoreGeneratedPdfInput {
+  contractId: string;
+  storageKey: string;
+  filename: string;
+  sizeBytes: number;
+  actorId: string;
+}
+
+export interface GeneratedPdfMeta {
+  id: string;
+  type: DocumentType;
+  entityType: EntityType;
+  entityId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: Date;
+}
+
+/**
+ * Persist a server-generated contract PDF: create the Document row
+ * (type/entityType=CONTRACT, entityId=contractId), repoint
+ * `contract.generatedPdfId` at it, and audit — all in one `$transaction`. The
+ * object bytes are uploaded by the SERVICE BEFORE this call so no storage I/O
+ * runs inside the transaction. `storageKey` is never returned.
+ */
+export function storeGeneratedPdf(input: StoreGeneratedPdfInput): Promise<GeneratedPdfMeta> {
+  return prisma.$transaction(async (tx) => {
+    const doc = await tx.document.create({
+      data: {
+        type: 'CONTRACT',
+        entityType: 'CONTRACT',
+        entityId: input.contractId,
+        filename: input.filename,
+        mimeType: 'application/pdf',
+        sizeBytes: input.sizeBytes,
+        storageKey: input.storageKey,
+        uploadedById: input.actorId,
+      },
+      select: {
+        id: true,
+        type: true,
+        entityType: true,
+        entityId: true,
+        filename: true,
+        mimeType: true,
+        sizeBytes: true,
+        createdAt: true,
+      },
+    });
+
+    // TODO: soft-delete superseded generated PDF (old doc + its MinIO object are
+    // left orphaned for now when a contract is re-generated).
+    await tx.contract.update({
+      where: { id: input.contractId },
+      data: { generatedPdfId: doc.id },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        entityType: 'CONTRACT',
+        entityId: input.contractId,
+        action: 'GENERATE_PDF',
+        actorId: input.actorId,
+        payload: { documentId: doc.id, filename: input.filename },
+      },
+    });
+
+    return doc;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Attach signed PDF — validates the Document belongs to this contract (IDOR)
 // ---------------------------------------------------------------------------
 
@@ -373,8 +452,8 @@ export function attachSignedPdf(
   actorId: string,
 ): Promise<Contract> {
   return prisma.$transaction(async (tx) => {
-    const doc = await tx.document.findUnique({
-      where: { id: documentId },
+    const doc = await tx.document.findFirst({
+      where: { id: documentId, archivedAt: null },
       select: { id: true, entityType: true, entityId: true },
     });
     if (!doc || doc.entityType !== 'CONTRACT' || doc.entityId !== contractId) {

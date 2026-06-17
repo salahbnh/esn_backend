@@ -88,6 +88,17 @@ async function seedTemplate() {
   });
 }
 
+/** A template carrying an extra MANUAL placeholder (`bonus`). */
+async function seedTemplateWithManual() {
+  return prisma.contractTemplate.create({
+    data: {
+      name: 'CDI with bonus',
+      body: 'Contrat {{type}} pour {{firstName}} {{lastName}} — bonus {{bonus}}.',
+      isActive: true,
+    },
+  });
+}
+
 /** Seeds RH/MANAGER/DIRECTION actors + a consultant + a template. */
 async function seedActorsAndContext() {
   await seedUser('RH', 'RH');
@@ -353,6 +364,41 @@ describe('happy path', () => {
     expect(res.status).toBe(400);
   });
 
+  it('sign rejects a soft-deleted (archived) CONTRACT Document -> 400, stays unsigned', async () => {
+    const { consultantId, templateId } = await seedActorsAndContext();
+    const c = await createContract('RH', consultantId, templateId);
+    const id = c.body.id as string;
+    await submit('RH', id);
+    await validate('RH', id);
+    await validate('MANAGER', id);
+    await validate('DIRECTION', id);
+
+    const rh = await prisma.user.findFirstOrThrow({ where: { role: 'RH' } });
+    const doc = await prisma.document.create({
+      data: {
+        type: 'CONTRACT',
+        entityType: 'CONTRACT',
+        entityId: id,
+        filename: 'signed.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+        storageKey: `contracts/${id}/signed.pdf`,
+        uploadedById: rh.id,
+        archivedAt: new Date(),
+      },
+    });
+
+    const res = await request(app)
+      .patch(`/api/contracts/${id}/sign`)
+      .set('Authorization', as('RH'))
+      .send({ signedPdfDocumentId: doc.id });
+    expect(res.status).toBe(400);
+
+    const row = await prisma.contract.findUniqueOrThrow({ where: { id } });
+    expect(row.status).not.toBe('SIGNED');
+    expect(row.signedPdfId).toBeNull();
+  });
+
   it('archive is idempotent', async () => {
     const { consultantId, templateId } = await seedActorsAndContext();
     const c = await createContract('RH', consultantId, templateId);
@@ -523,5 +569,94 @@ describe('contract amendments', () => {
       .set('Authorization', as('RH'))
       .send(amendmentPayload());
     expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Manual fields + in-app PDF generation (D-FORM + D3)
+// ---------------------------------------------------------------------------
+
+describe('POST /api/contracts/:id/generate-pdf', () => {
+  /** Drive a contract (created with a complete `fields` map) to PENDING_SIGNATURE. */
+  async function readyContract(consultantId: string, templateId: string, fields: Record<string, string>) {
+    const created = await request(app)
+      .post('/api/contracts')
+      .set('Authorization', as('RH'))
+      .send({ consultantId, templateId, type: 'CDI', fields });
+    const id = created.body.id as string;
+    await submit('RH', id);
+    await validate('RH', id);
+    await validate('MANAGER', id);
+    await validate('DIRECTION', id);
+    return id;
+  }
+
+  it('generates a PDF Document for a complete contract -> 201 (no storageKey leaked)', async () => {
+    await seedUser('RH', 'RH');
+    await seedUser('MANAGER', 'MANAGER');
+    await seedUser('DIRECTION', 'DIRECTION');
+    const { consultant } = await seedConsultant('CONSULTANT_A');
+    const template = await seedTemplateWithManual();
+
+    const id = await readyContract(consultant.id, template.id, { bonus: '5000' });
+
+    const res = await request(app)
+      .post(`/api/contracts/${id}/generate-pdf`)
+      .set('Authorization', as('RH'));
+    expect(res.status).toBe(201);
+    expect(res.body.document).toMatchObject({
+      type: 'CONTRACT',
+      entityType: 'CONTRACT',
+      entityId: id,
+      mimeType: 'application/pdf',
+    });
+    expect(res.body.document).not.toHaveProperty('storageKey');
+
+    // generatedPdfId is now pointed at the new Document.
+    const row = await prisma.contract.findUniqueOrThrow({ where: { id } });
+    expect(row.generatedPdfId).toBe(res.body.document.id);
+
+    // The generated Document is downloadable via the Documents module.
+    const url = await request(app)
+      .get(`/api/documents/${res.body.document.id}/url`)
+      .set('Authorization', as('RH'));
+    expect(url.status).toBe(200);
+  });
+
+  it('rejects generation when a manual placeholder is unfilled -> 400 INCOMPLETE_CONTRACT', async () => {
+    await seedUser('RH', 'RH');
+    await seedUser('MANAGER', 'MANAGER');
+    await seedUser('DIRECTION', 'DIRECTION');
+    const { consultant } = await seedConsultant('CONSULTANT_A');
+    const template = await seedTemplateWithManual();
+
+    // No `bonus` provided -> the placeholder stays unfilled.
+    const id = await readyContract(consultant.id, template.id, {});
+
+    const res = await request(app)
+      .post(`/api/contracts/${id}/generate-pdf`)
+      .set('Authorization', as('RH'));
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.code).toBe('INCOMPLETE_CONTRACT');
+    expect(res.body.error.details.unfilled).toContain('bonus');
+  });
+
+  it('rejects generation on a DRAFT contract -> 400 CONTRACT_NOT_READY', async () => {
+    const { consultantId, templateId } = await seedActorsAndContext();
+    const created = await createContract('RH', consultantId, templateId);
+    const res = await request(app)
+      .post(`/api/contracts/${created.body.id}/generate-pdf`)
+      .set('Authorization', as('RH'));
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.code).toBe('CONTRACT_NOT_READY');
+  });
+
+  it('MANAGER cannot generate -> 403', async () => {
+    const { consultantId, templateId } = await seedActorsAndContext();
+    const created = await createContract('RH', consultantId, templateId);
+    const res = await request(app)
+      .post(`/api/contracts/${created.body.id}/generate-pdf`)
+      .set('Authorization', as('MANAGER'));
+    expect(res.status).toBe(403);
   });
 });

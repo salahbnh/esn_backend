@@ -57,6 +57,17 @@ describe('getTemplate', () => {
     await expect(service.getTemplate('nope')).rejects.toMatchObject({ statusCode: 404 });
     await expect(service.getTemplate('nope')).rejects.toBeInstanceOf(AppError);
   });
+
+  it('includes placeholders introspected from the body (auto vs manual)', async () => {
+    mockRepo.findTemplateById.mockResolvedValue(
+      template({ body: 'Hi {{firstName}}, salary {{salary}}' }),
+    );
+    const res = await service.getTemplate('tmpl1');
+    expect(res.placeholders).toEqual([
+      { name: 'firstName', source: 'auto' },
+      { name: 'salary', source: 'manual' },
+    ]);
+  });
 });
 
 describe('updateTemplate', () => {

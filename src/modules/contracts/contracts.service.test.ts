@@ -2,17 +2,31 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Contract, ContractValidation, Role, ValidationStep } from '@prisma/client';
 import { AppError } from '../../lib/app-error.js';
 
-// Mock the repository (so no $transaction / Prisma is touched) and the logger
-// (so importing the service doesn't pull in env-validating config).
+// Mock the repository (so no $transaction / Prisma is touched), the logger, and
+// the storage/pdf libs (so importing the service doesn't pull in env-validating
+// config or hit MinIO).
 vi.mock('./contracts.repository.js');
 vi.mock('../../lib/logger.js', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+vi.mock('../../lib/storage.js', () => ({
+  putObject: vi.fn(async () => undefined),
+  buildStorageKey: vi.fn((entityType: string, entityId: string, filename: string) =>
+    `${entityType.toLowerCase()}/${entityId}/key-${filename}`,
+  ),
+}));
+vi.mock('../../lib/pdf.js', () => ({
+  renderContractPdf: vi.fn(async () => Buffer.from('%PDF-mock')),
+}));
 
 import * as repo from './contracts.repository.js';
 import * as service from './contracts.service.js';
+import { putObject } from '../../lib/storage.js';
+import { renderContractPdf } from '../../lib/pdf.js';
 
 const mockRepo = vi.mocked(repo);
+const mockPutObject = vi.mocked(putObject);
+const mockRenderPdf = vi.mocked(renderContractPdf);
 
 type ConsultantPrefill = NonNullable<Awaited<ReturnType<typeof repo.findConsultantForPrefill>>>;
 type TemplateRow = NonNullable<Awaited<ReturnType<typeof repo.findTemplate>>>;
@@ -95,6 +109,32 @@ describe('createContract', () => {
     await expect(
       service.createContract({ consultantId: 'nope', type: 'CDI' }, 'actor1'),
     ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('merges RH manual fields and records unfilled placeholders', async () => {
+    mockRepo.findConsultantForPrefill.mockResolvedValue({
+      id: 'con1',
+      position: 'Engineer',
+      tjm: { toString: () => '500.00' },
+      user: { firstName: 'Ada', lastName: 'Lovelace' },
+    } as unknown as ConsultantPrefill);
+    mockRepo.findTemplate.mockResolvedValue({
+      id: 'tmpl1',
+      body: '{{firstName}} earns {{salary}} at {{office}}',
+    } as unknown as TemplateRow);
+    mockRepo.createContract.mockResolvedValue(contract() as unknown as ContractDetail);
+
+    await service.createContract(
+      { consultantId: 'con1', templateId: 'tmpl1', type: 'CDI', fields: { salary: '60000' } },
+      'actor1',
+    );
+
+    const arg = mockRepo.createContract.mock.calls[0]![0] as unknown as {
+      prefilledData: { renderedBody: string; unfilled: string[]; fields: Record<string, string> };
+    };
+    expect(arg.prefilledData.renderedBody).toBe('Ada earns 60000 at {{office}}');
+    expect(arg.prefilledData.unfilled).toEqual(['office']);
+    expect(arg.prefilledData.fields.salary).toBe('60000');
   });
 });
 
@@ -280,8 +320,14 @@ describe('updateContract', () => {
     expect(mockRepo.updateContract).not.toHaveBeenCalled();
   });
 
-  it('updates a DRAFT contract and audits (happy path)', async () => {
+  it('updates a DRAFT contract, re-renders prefill, and audits (happy path)', async () => {
     mockRepo.findContractById.mockResolvedValue(contract({ status: 'DRAFT' }));
+    mockRepo.findConsultantForPrefill.mockResolvedValue({
+      id: 'con1',
+      position: 'Engineer',
+      tjm: { toString: () => '500.00' },
+      user: { firstName: 'Ada', lastName: 'Lovelace' },
+    } as unknown as ConsultantPrefill);
     mockRepo.updateContract.mockResolvedValue(
       contract({ status: 'DRAFT', type: 'CDD' }) as unknown as ContractDetail,
     );
@@ -289,7 +335,122 @@ describe('updateContract', () => {
     const res = await service.updateContract('ctr1', { type: 'CDD' }, 'actor1');
 
     expect(res.type).toBe('CDD');
-    expect(mockRepo.updateContract).toHaveBeenCalledWith('ctr1', { type: 'CDD' });
+    // The update payload carries the new type AND a re-rendered prefill snapshot.
+    const arg = mockRepo.updateContract.mock.calls[0]!;
+    expect(arg[0]).toBe('ctr1');
+    expect(arg[1]).toMatchObject({ type: 'CDD' });
+    expect(arg[1]).toHaveProperty('prefilledData');
     expect(mockRepo.writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('re-renders manual fields with no template (renderedBody empty, no unfilled)', async () => {
+    mockRepo.findContractById.mockResolvedValue(contract({ status: 'DRAFT' }));
+    mockRepo.findConsultantForPrefill.mockResolvedValue({
+      id: 'con1',
+      position: 'Engineer',
+      tjm: { toString: () => '500.00' },
+      user: { firstName: 'Ada', lastName: 'Lovelace' },
+    } as unknown as ConsultantPrefill);
+    mockRepo.updateContract.mockResolvedValue(contract({ status: 'DRAFT' }) as unknown as ContractDetail);
+
+    await service.updateContract('ctr1', { fields: { salary: '60000' } }, 'actor1');
+
+    const arg = mockRepo.updateContract.mock.calls[0]![1] as unknown as {
+      prefilledData: { fields: Record<string, string>; unfilled: string[] };
+    };
+    expect(arg.prefilledData.fields.salary).toBe('60000');
+    expect(arg.prefilledData.unfilled).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// In-app PDF generation
+// ---------------------------------------------------------------------------
+
+describe('generateContractPdf', () => {
+  it('happy path: renders, uploads, stores Document, returns meta', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({
+        status: 'PENDING_SIGNATURE',
+        prefilledData: { renderedBody: 'Hello Ada', unfilled: [] },
+      }),
+    );
+    mockRepo.storeGeneratedPdf.mockResolvedValue({
+      id: 'doc1',
+      type: 'CONTRACT',
+      entityType: 'CONTRACT',
+      entityId: 'ctr1',
+      filename: 'contract-ctr1.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 9,
+      createdAt: new Date(),
+    });
+
+    const res = await service.generateContractPdf('ctr1', 'actor1');
+
+    expect(mockRenderPdf).toHaveBeenCalledWith({
+      title: 'Contrat de travail',
+      body: 'Hello Ada',
+    });
+    expect(mockPutObject).toHaveBeenCalledTimes(1);
+    expect(mockPutObject.mock.calls[0]![0]).toMatchObject({ contentType: 'application/pdf' });
+    expect(mockRepo.storeGeneratedPdf).toHaveBeenCalledTimes(1);
+    expect(res.document.id).toBe('doc1');
+    // storageKey is never surfaced to the caller.
+    expect(res.document).not.toHaveProperty('storageKey');
+  });
+
+  it('throws 400 INCOMPLETE_CONTRACT when unfilled is non-empty', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({
+        status: 'PENDING_SIGNATURE',
+        prefilledData: { renderedBody: 'Hi {{office}}', unfilled: ['office'] },
+      }),
+    );
+
+    await expect(service.generateContractPdf('ctr1', 'actor1')).rejects.toMatchObject({
+      statusCode: 400,
+      details: { code: 'INCOMPLETE_CONTRACT', unfilled: ['office'] },
+    });
+    expect(mockRenderPdf).not.toHaveBeenCalled();
+    expect(mockPutObject).not.toHaveBeenCalled();
+    expect(mockRepo.storeGeneratedPdf).not.toHaveBeenCalled();
+  });
+
+  it('throws 400 CONTRACT_NOT_READY when status is DRAFT', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({ status: 'DRAFT', prefilledData: { renderedBody: 'x', unfilled: [] } }),
+    );
+
+    await expect(service.generateContractPdf('ctr1', 'actor1')).rejects.toMatchObject({
+      statusCode: 400,
+      details: { code: 'CONTRACT_NOT_READY' },
+    });
+    expect(mockRenderPdf).not.toHaveBeenCalled();
+    expect(mockRepo.storeGeneratedPdf).not.toHaveBeenCalled();
+  });
+
+  it('throws 400 CONTRACT_NO_BODY when the rendered body is empty', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({
+        status: 'PENDING_SIGNATURE',
+        prefilledData: { renderedBody: '   ', unfilled: [] },
+      }),
+    );
+
+    await expect(service.generateContractPdf('ctr1', 'actor1')).rejects.toMatchObject({
+      statusCode: 400,
+      details: { code: 'CONTRACT_NO_BODY' },
+    });
+    expect(mockRenderPdf).not.toHaveBeenCalled();
+    expect(mockPutObject).not.toHaveBeenCalled();
+    expect(mockRepo.storeGeneratedPdf).not.toHaveBeenCalled();
+  });
+
+  it('throws 404 when the contract does not exist', async () => {
+    mockRepo.findContractById.mockResolvedValue(null);
+    await expect(service.generateContractPdf('nope', 'actor1')).rejects.toMatchObject({
+      statusCode: 404,
+    });
   });
 });

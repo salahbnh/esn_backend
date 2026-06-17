@@ -268,4 +268,21 @@ describe('GET /api/contract-templates/:id', () => {
       .set('Authorization', as('RH'));
     expect(res.status).toBe(404);
   });
+
+  it('returns placeholders introspected from the body (auto vs manual)', async () => {
+    const create = await request(app)
+      .post('/api/contract-templates')
+      .set('Authorization', as('RH'))
+      .send({ name: 'With bonus', body: 'Hi {{firstName}}, bonus {{bonus}}' });
+    const id = create.body.id as string;
+
+    const res = await request(app)
+      .get(`/api/contract-templates/${id}`)
+      .set('Authorization', as('RH'));
+    expect(res.status).toBe(200);
+    expect(res.body.placeholders).toEqual([
+      { name: 'firstName', source: 'auto' },
+      { name: 'bonus', source: 'manual' },
+    ]);
+  });
 });

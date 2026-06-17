@@ -4,6 +4,9 @@ import * as repo from './contracts.repository.js';
 import type { Pagination } from './contracts.repository.js';
 import type { Prisma } from '@prisma/client';
 import { buildPrefillData } from './contracts.prefill.js';
+import type { PrefillResult } from './contracts.prefill.js';
+import { renderContractPdf } from '../../lib/pdf.js';
+import { buildStorageKey, putObject } from '../../lib/storage.js';
 import { STEP_ROLE_MAP, VALIDATION_STEPS } from './contracts.constants.js';
 import type {
   CreateAmendmentBody,
@@ -91,22 +94,34 @@ export function resolveContractOwnerUserId(id: string): Promise<string | null> {
 // Create / update
 // ---------------------------------------------------------------------------
 
-export async function createContract(body: CreateContractBody, actorId: string) {
-  const consultant = await repo.findConsultantForPrefill(body.consultantId);
+/**
+ * Builds the prefill snapshot for a consultant + (optional) template, merging
+ * the RH-entered manual `fields`. Loads the consultant (404 if missing) and the
+ * template body (404 if a templateId is given but missing).
+ */
+async function computePrefill(args: {
+  consultantId: string;
+  templateId?: string;
+  type: string;
+  startDate?: string;
+  endDate?: string;
+  fields?: Record<string, string>;
+}) {
+  const consultant = await repo.findConsultantForPrefill(args.consultantId);
   if (!consultant) {
     throw AppError.notFound('Consultant not found');
   }
 
   let template: { body: string } | null = null;
-  if (body.templateId !== undefined) {
-    const loaded = await repo.findTemplate(body.templateId);
+  if (args.templateId !== undefined) {
+    const loaded = await repo.findTemplate(args.templateId);
     if (!loaded) {
       throw AppError.notFound('Contract template not found');
     }
     template = { body: loaded.body };
   }
 
-  const prefill = buildPrefillData({
+  return buildPrefillData({
     template,
     consultant: {
       user: { firstName: consultant.user.firstName, lastName: consultant.user.lastName },
@@ -114,14 +129,27 @@ export async function createContract(body: CreateContractBody, actorId: string) 
       tjm: consultant.tjm !== null ? consultant.tjm.toString() : null,
     },
     overrides: {
-      ...(body.startDate !== undefined ? { startDate: body.startDate } : {}),
-      ...(body.endDate !== undefined ? { endDate: body.endDate } : {}),
-      type: body.type,
+      ...(args.startDate !== undefined ? { startDate: args.startDate } : {}),
+      ...(args.endDate !== undefined ? { endDate: args.endDate } : {}),
+      type: args.type,
     },
+    ...(args.fields !== undefined ? { fields: args.fields } : {}),
+  });
+}
+
+export async function createContract(body: CreateContractBody, actorId: string) {
+  const prefill = await computePrefill({
+    consultantId: body.consultantId,
+    ...(body.templateId !== undefined ? { templateId: body.templateId } : {}),
+    type: body.type,
+    ...(body.startDate !== undefined ? { startDate: body.startDate } : {}),
+    ...(body.endDate !== undefined ? { endDate: body.endDate } : {}),
+    ...(body.fields !== undefined ? { fields: body.fields } : {}),
   });
 
-  // TODO(documents): render the prefilled body as a PDF, upload to MinIO, create
-  // a Document row, and set generatedPdfId. For now generatedPdfId stays null.
+  // PDF generation is on-demand via POST /:id/generate-pdf; generatedPdfId stays
+  // null until then. The full prefill snapshot (fields + renderedBody + unfilled)
+  // is persisted now so generation can later refuse an incomplete contract.
   const contract = await repo.createContract({
     consultantId: body.consultantId,
     ...(body.templateId !== undefined ? { templateId: body.templateId } : {}),
@@ -154,10 +182,26 @@ export async function updateContract(
     });
   }
 
+  // Re-render the prefill from the effective (merged) field values so the stored
+  // snapshot + unfilled list stay in sync after an edit. AUTO values are derived
+  // from the consultant; RH `fields` provide the manual ones.
+  const effectiveType = body.type ?? contract.type;
+  const effectiveStart = body.startDate ?? contract.startDate?.toISOString();
+  const effectiveEnd = body.endDate ?? contract.endDate?.toISOString();
+  const prefill = await computePrefill({
+    consultantId: contract.consultantId,
+    ...(contract.templateId !== null ? { templateId: contract.templateId } : {}),
+    type: effectiveType,
+    ...(effectiveStart !== undefined ? { startDate: effectiveStart } : {}),
+    ...(effectiveEnd !== undefined ? { endDate: effectiveEnd } : {}),
+    ...(body.fields !== undefined ? { fields: body.fields } : {}),
+  });
+
   const updated = await repo.updateContract(id, {
     ...(body.type !== undefined ? { type: body.type } : {}),
     ...(body.startDate !== undefined ? { startDate: new Date(body.startDate) } : {}),
     ...(body.endDate !== undefined ? { endDate: new Date(body.endDate) } : {}),
+    prefilledData: prefill as unknown as Prisma.InputJsonValue,
   });
 
   await repo.writeAuditLog({
@@ -269,6 +313,77 @@ export async function archiveContract(id: string, actorId: string): Promise<Cont
     payload: { from: contract.status, to: 'ARCHIVED' },
   });
   return updated;
+}
+
+// ---------------------------------------------------------------------------
+// In-app PDF generation
+// ---------------------------------------------------------------------------
+
+/** The shape we read back out of the persisted `prefilledData` Json blob. */
+type StoredPrefill = Pick<PrefillResult, 'renderedBody' | 'unfilled'>;
+
+function readPrefill(data: unknown): StoredPrefill {
+  const obj = (data ?? {}) as Record<string, unknown>;
+  const renderedBody = typeof obj['renderedBody'] === 'string' ? obj['renderedBody'] : '';
+  const unfilled = Array.isArray(obj['unfilled'])
+    ? (obj['unfilled'] as unknown[]).filter((u): u is string => typeof u === 'string')
+    : [];
+  return { renderedBody, unfilled };
+}
+
+/**
+ * Render the contract's prefilled body to a PDF, upload it to object storage,
+ * then atomically create the Document row + repoint generatedPdfId + audit.
+ * Storage I/O (putObject) runs BEFORE the repository $transaction. Guards:
+ *  - status must be INTERNAL_VALIDATION or PENDING_SIGNATURE (after submit).
+ *  - prefilledData.unfilled must be empty (no blank placeholders in the PDF).
+ */
+export async function generateContractPdf(
+  contractId: string,
+  actorId: string,
+): Promise<{ document: repo.GeneratedPdfMeta }> {
+  const contract = await loadContractOr404(contractId);
+
+  if (contract.status !== 'INTERNAL_VALIDATION' && contract.status !== 'PENDING_SIGNATURE') {
+    throw AppError.badRequest('Contract is not ready for PDF generation', {
+      code: 'CONTRACT_NOT_READY',
+      status: contract.status,
+    });
+  }
+
+  const prefill = readPrefill(contract.prefilledData);
+  if (prefill.unfilled.length > 0) {
+    throw AppError.badRequest('Contract has unfilled placeholders', {
+      code: 'INCOMPLETE_CONTRACT',
+      unfilled: prefill.unfilled,
+    });
+  }
+
+  if (prefill.renderedBody.trim().length === 0) {
+    throw AppError.badRequest('Contract has no template body to render', {
+      code: 'CONTRACT_NO_BODY',
+    });
+  }
+
+  const pdf = await renderContractPdf({
+    title: 'Contrat de travail',
+    body: prefill.renderedBody,
+  });
+
+  // Storage I/O happens HERE — outside the repository $transaction.
+  const filename = `contract-${contractId}.pdf`;
+  const storageKey = buildStorageKey('CONTRACT', contractId, filename);
+  await putObject({ key: storageKey, body: pdf, contentType: 'application/pdf' });
+
+  const document = await repo.storeGeneratedPdf({
+    contractId,
+    storageKey,
+    filename,
+    sizeBytes: pdf.length,
+    actorId,
+  });
+
+  return { document };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,14 @@
+import {
+  AUTO_PLACEHOLDERS,
+  parseTemplatePlaceholders,
+} from '../contract-templates/template-placeholders.js';
+
 /**
  * Pure prefill/render logic for contracts. NO Prisma, NO HTTP — unit-testable in
- * isolation. Substitutes `{{placeholders}}` in the template body with consultant
- * + contract data. Unknown `{{x}}` placeholders are left untouched. A null tjm
- * renders as the empty string. With no template, `renderedBody` is empty.
+ * isolation. Substitutes `{{placeholders}}` in the template body with a merge of
+ * AUTO fields (derived from the consultant/contract) and MANUAL `fields` (entered
+ * by RH). AUTO keys always win on collision. A null tjm renders as the empty
+ * string. With no template, `renderedBody` is empty and nothing is unfilled.
  */
 
 export interface PrefillTemplate {
@@ -25,17 +31,23 @@ export interface PrefillInput {
   template: PrefillTemplate | null;
   consultant: PrefillConsultant;
   overrides: PrefillOverrides;
+  /** RH-entered manual placeholder values (placeholder name -> value). */
+  fields?: Record<string, string>;
 }
 
 export interface PrefillResult {
   fields: Record<string, string>;
   renderedBody: string;
+  /** Template placeholders that remain without a (non-empty) value. */
+  unfilled: string[];
 }
 
-export function buildPrefillData(input: PrefillInput): PrefillResult {
-  const { template, consultant, overrides } = input;
+const AUTO_KEYS: ReadonlySet<string> = new Set(AUTO_PLACEHOLDERS);
 
-  const fields: Record<string, string> = {
+export function buildPrefillData(input: PrefillInput): PrefillResult {
+  const { template, consultant, overrides, fields: manualFields } = input;
+
+  const autoFields: Record<string, string> = {
     firstName: consultant.user.firstName,
     lastName: consultant.user.lastName,
     position: consultant.position,
@@ -45,15 +57,33 @@ export function buildPrefillData(input: PrefillInput): PrefillResult {
     type: overrides.type,
   };
 
-  // No template → nothing to render. Snapshot the fields only.
-  if (!template) {
-    return { fields, renderedBody: '' };
+  // Merge: RH manual values are the base; AUTO keys always override so RH can
+  // never spoof a system-derived field via a colliding manual key.
+  const merged: Record<string, string> = { ...(manualFields ?? {}) };
+  for (const key of AUTO_KEYS) {
+    merged[key] = autoFields[key]!;
   }
 
-  // Replace only known placeholders; unknown `{{x}}` are left as-is.
-  const renderedBody = template.body.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
-    Object.prototype.hasOwnProperty.call(fields, key) ? fields[key]! : match,
-  );
+  // No template → nothing to render. Snapshot the merged fields only.
+  if (!template) {
+    return { fields: merged, renderedBody: '', unfilled: [] };
+  }
 
-  return { fields, renderedBody };
+  // Replace only placeholders with a non-empty value; unknown/empty `{{x}}` are
+  // left as-is and reported as unfilled.
+  const renderedBody = template.body.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, raw: string) => {
+    const key = raw.trim();
+    const value = merged[key];
+    return value !== undefined && value !== '' ? value : match;
+  });
+
+  const placeholders = parseTemplatePlaceholders(template.body);
+  const unfilled = placeholders
+    .filter((p) => {
+      const value = merged[p.name];
+      return value === undefined || value === '';
+    })
+    .map((p) => p.name);
+
+  return { fields: merged, renderedBody, unfilled };
 }
