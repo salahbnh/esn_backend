@@ -7,7 +7,9 @@
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
-  "accessTokenLifespan": 1800,
+  "accessTokenLifespan": 28800,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 86400,
   "roles": {
     "realm": [
       { "name": "RH", "description": "Human resources: recruitment, consultant files, contracts, document, initiates contract validation" },
