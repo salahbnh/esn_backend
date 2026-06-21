@@ -53,6 +53,11 @@ export const auth = asyncHandler(async (req: Request, _res: Response, next: Next
   }
 
   const claims = await verifyToken(token);
+  if (!claims.sub) {
+    // Keycloak 26 serves `sub` via the "basic" client scope — if it's absent the
+    // client is misconfigured. Fail clearly rather than with a downstream DB error.
+    throw AppError.unauthorized('Token has no subject (sub) claim');
+  }
   const role = resolveRole(claims);
 
   let user = await findAuthUserByKeycloakId(claims.sub);

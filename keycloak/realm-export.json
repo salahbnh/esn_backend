@@ -38,6 +38,7 @@
       },
       "fullScopeAllowed": true,
       "defaultClientScopes": [
+        "basic",
         "web-origins",
         "acr",
         "profile",
@@ -49,6 +50,18 @@
         "phone",
         "offline_access",
         "microprofile-jwt"
+      ],
+      "protocolMappers": [
+        {
+          "name": "esn-backend-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "esn-backend",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
       ]
     },
     {
@@ -64,7 +77,7 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
       "bearerOnly": false,
-      "fullScopeAllowed": false
+      "fullScopeAllowed": true
     }
   ],
   "users": [
@@ -125,7 +138,7 @@
       "enabled": true,
       "serviceAccountClientId": "esn-backend",
       "clientRoles": {
-        "realm-management": ["manage-users", "view-users"]
+        "realm-management": ["manage-users", "view-users", "view-realm"]
       }
     }
   ]
