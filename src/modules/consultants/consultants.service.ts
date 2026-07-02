@@ -1,5 +1,6 @@
 import type { Consultant, ConsultantStatus, Prisma } from '@prisma/client';
 import { AppError } from '../../lib/app-error.js';
+import { resendInvite } from '../../lib/keycloak-admin.js';
 import * as repo from './consultants.repository.js';
 import type { Pagination } from './consultants.repository.js';
 import type {
@@ -296,4 +297,27 @@ export async function listConsultantDocuments(
   }
   const { items, total } = await repo.listConsultantDocuments(consultantId, pagination);
   return paginated(items, total, pagination.page, pagination.pageSize);
+}
+
+/**
+ * Re-send the set-password invitation email to a consultant (RH/DIRECTION action)
+ * — e.g. when the original invite link expired. Delegates the actual send to
+ * Keycloak's execute-actions-email; writes an audit entry.
+ */
+export async function resendConsultantInvite(
+  consultantId: string,
+  actorId: string,
+): Promise<void> {
+  const record = await repo.findConsultantKeycloakId(consultantId);
+  if (!record) {
+    throw AppError.notFound('Consultant not found');
+  }
+  await resendInvite(record.user.keycloakId);
+  await repo.writeAuditLog({
+    entityType: 'CONSULTANT',
+    entityId: consultantId,
+    action: 'RESEND_INVITE',
+    actorId,
+    payload: {},
+  });
 }

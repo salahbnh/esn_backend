@@ -10,6 +10,15 @@
   "accessTokenLifespan": 28800,
   "ssoSessionIdleTimeout": 28800,
   "ssoSessionMaxLifespan": 86400,
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "noreply@esn.local",
+    "fromDisplayName": "ESN Internal",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
   "roles": {
     "realm": [
       { "name": "RH", "description": "Human resources: recruitment, consultant files, contracts, document, initiates contract validation" },

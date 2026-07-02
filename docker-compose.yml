@@ -68,6 +68,24 @@ services:
       echo 'Bucket esn-documents ready.';
       "
 
+  # Dev SMTP trap: Keycloak sends the set-password invite here; browse captured
+  # mail at http://localhost:8025. Catches all mail regardless of domain, so the
+  # invite to prenom.nom@esn.local (a fake internal domain) is readable locally.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: esn-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP (Keycloak -> Mailpit)
+      - "8025:8025"   # Web inbox
+    networks:
+      - esn-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8025"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   keycloak:
     image: quay.io/keycloak/keycloak:latest
     container_name: esn-keycloak

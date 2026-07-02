@@ -7,7 +7,14 @@ import type {
   Proposal,
 } from '@prisma/client';
 import { AppError } from '../../lib/app-error.js';
-import { activateUser, provisionUser, deleteUser } from '../../lib/keycloak-admin.js';
+import { config } from '../../config/env.js';
+import {
+  activateUser,
+  checkKeycloakUsernameExists,
+  provisionUser,
+  deleteUser,
+} from '../../lib/keycloak-admin.js';
+import { applyEmailSuffix, generateBaseEmail } from '../../lib/company-email.js';
 import { logger } from '../../lib/logger.js';
 import * as repo from './recruitment.repository.js';
 import type {
@@ -332,17 +339,31 @@ export async function convertToConsultant(
     });
   }
 
-  const existingUser = await repo.findUserByEmail(candidate.email);
-  if (existingUser) {
-    throw AppError.conflict('A user account already exists for this email', {
-      code: 'USER_ALREADY_EXISTS',
-    });
+  // Resolve a unique company email (prenom.nom@esn.local) for the login identity,
+  // suffixing on collision. The candidate's personal email stays on the Candidate
+  // record; the User + Keycloak account use this generated internal address.
+  const baseEmail = generateBaseEmail(
+    candidate.firstName,
+    candidate.lastName,
+    config.COMPANY_EMAIL_DOMAIN,
+  );
+  let companyEmail = baseEmail;
+  for (let suffix = 2; ; suffix++) {
+    const [dbConflict, kcConflict] = await Promise.all([
+      repo.findUserByEmail(companyEmail),
+      checkKeycloakUsernameExists(companyEmail),
+    ]);
+    if (!dbConflict && !kcConflict) break;
+    if (suffix > 99) {
+      throw AppError.internal('Could not generate a unique company email after 99 attempts');
+    }
+    companyEmail = applyEmailSuffix(baseEmail, suffix);
   }
 
   // 1. Provision the Keycloak account first (we need its `sub` for User.keycloakId).
   //    The account is created DISABLED and only enabled after the DB tx commits.
   const { id: keycloakId } = await provisionUser({
-    email: candidate.email,
+    email: companyEmail,
     firstName: candidate.firstName,
     lastName: candidate.lastName,
     realmRole: 'CONSULTANT',
@@ -352,7 +373,7 @@ export async function convertToConsultant(
   let result: ConversionResult;
   try {
     result = await repo.createConsultantFromCandidate({
-      email: candidate.email,
+      email: companyEmail,
       firstName: candidate.firstName,
       lastName: candidate.lastName,
       keycloakId,

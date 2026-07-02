@@ -134,6 +134,16 @@ export function findConsultantUserIdById(
   return prisma.consultant.findUnique({ where: { id }, select: { userId: true } });
 }
 
+/** Resolve a consultant's Keycloak sub (for re-sending the set-password invite). */
+export function findConsultantKeycloakId(
+  id: string,
+): Promise<{ user: { keycloakId: string } } | null> {
+  return prisma.consultant.findUnique({
+    where: { id },
+    select: { user: { select: { keycloakId: true } } },
+  });
+}
+
 /** Lightweight existence check (no PII) for 404 guards. */
 export async function consultantExists(id: string): Promise<boolean> {
   const row = await prisma.consultant.findUnique({ where: { id }, select: { id: true } });

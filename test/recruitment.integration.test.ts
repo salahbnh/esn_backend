@@ -40,6 +40,10 @@ vi.mock('../src/lib/keycloak.js', () => ({
 vi.mock('../src/lib/keycloak-admin.js', () => ({
   provisionUser: vi.fn(async () => ({ id: `kc-provisioned-${Date.now()}` })),
   deleteUser: vi.fn(async () => undefined),
+  activateUser: vi.fn(async () => undefined),
+  // Collision pre-check: the identity provider is empty in the test, so the
+  // generated company email is always free there — the DB is the decider.
+  checkKeycloakUsernameExists: vi.fn(async () => false),
 }));
 
 import { buildApp } from '../src/app.js';
@@ -205,13 +209,46 @@ describe('full pipeline create -> convert', () => {
     expect(convert.body.candidate.status).toBe('HIRED');
     expect(convert.body.consultant).toMatchObject({ position: 'Backend Engineer', status: 'AVAILABLE' });
 
-    // The new consultant's User row exists in the DB.
+    // The new consultant's User row uses the generated COMPANY email (identity),
+    // while the personal recruitment email stays on the Candidate record.
     const consultant = await prisma.consultant.findUnique({
       where: { id: convert.body.consultant.id },
-      include: { user: true },
+      include: { user: true, candidateOrigin: true },
     });
-    expect(consultant?.user.email).toBe('pipeline@example.com');
+    expect(consultant?.user.email).toBe('ada.lovelace@esn.local');
+    expect(consultant?.candidateOrigin?.email).toBe('pipeline@example.com');
     expect(consultant?.candidateId).toBe(id);
+  });
+
+  it('suffixes the company email when two candidates share a name', async () => {
+    // Two different people, same first+last name -> same base company email.
+    const convertOne = async (personalEmail: string) => {
+      const created = await createCandidateAs('RH', personalEmail);
+      const id = created.body.id;
+      await request(app)
+        .patch(`/api/candidates/${id}/status`)
+        .set('Authorization', as('RH'))
+        .send({ status: 'INTERVIEW' });
+      await request(app)
+        .patch(`/api/candidates/${id}/status`)
+        .set('Authorization', as('RH'))
+        .send({ status: 'VALIDATED' });
+      const convert = await request(app)
+        .post(`/api/candidates/${id}/convert`)
+        .set('Authorization', as('DIRECTION'))
+        .send({ position: 'Engineer' });
+      expect(convert.status).toBe(201);
+      const row = await prisma.consultant.findUnique({
+        where: { id: convert.body.consultant.id },
+        include: { user: true },
+      });
+      return row?.user.email;
+    };
+
+    const first = await convertOne('ada.one@example.com');
+    const second = await convertOne('ada.two@example.com');
+    expect(first).toBe('ada.lovelace@esn.local');
+    expect(second).toBe('ada.lovelace2@esn.local');
   });
 
   it('rejects an invalid transition (APPLIED -> VALIDATED) with 400', async () => {

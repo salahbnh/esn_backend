@@ -58,6 +58,50 @@ async function adminFetch(path: string, init: RequestInit): Promise<Response> {
   });
 }
 
+/**
+ * Path for the UPDATE_PASSWORD invite email, scoped with `client_id` +
+ * `redirect_uri` so the set-password link lands back on the frontend app rather
+ * than the Keycloak account console (Keycloak requires both to build the link).
+ */
+function executeActionsEmailPath(id: string): string {
+  const params = new URLSearchParams({
+    client_id: config.KEYCLOAK_FRONTEND_CLIENT_ID,
+    redirect_uri: config.CORS_ORIGIN,
+  });
+  return `/users/${id}/execute-actions-email?${params.toString()}`;
+}
+
+/**
+ * True if a Keycloak user already exists with this exact username. Used for the
+ * pre-flight collision check when generating a company email at conversion.
+ */
+export async function checkKeycloakUsernameExists(username: string): Promise<boolean> {
+  const params = new URLSearchParams({ username, exact: 'true' });
+  const res = await adminFetch(`/users?${params.toString()}`, { method: 'GET' });
+  if (!res.ok) {
+    logger.error({ status: res.status }, 'Keycloak username lookup failed');
+    throw AppError.internal('Could not check the identity provider for an existing account');
+  }
+  const users = (await res.json()) as unknown[];
+  return Array.isArray(users) && users.length > 0;
+}
+
+/**
+ * Re-send the UPDATE_PASSWORD set-password email for an already-provisioned user.
+ * Explicit RH/DIRECTION action — NOT gated by KEYCLOAK_INVITE_EMAIL. Requires the
+ * realm SMTP (Mailpit in dev) to be configured.
+ */
+export async function resendInvite(keycloakId: string): Promise<void> {
+  const res = await adminFetch(executeActionsEmailPath(keycloakId), {
+    method: 'PUT',
+    body: JSON.stringify(['UPDATE_PASSWORD']),
+  });
+  if (!res.ok) {
+    logger.error({ status: res.status, keycloakId }, 'Keycloak resend-invite failed');
+    throw AppError.internal('Could not send the invitation email');
+  }
+}
+
 export interface ProvisionUserInput {
   email: string;
   firstName: string;
@@ -129,12 +173,25 @@ export async function provisionUser(input: ProvisionUserInput): Promise<{ id: st
       throw AppError.internal('Could not set the initial password');
     }
 
-    // 4. Optionally email the set-password invite (prod with SMTP).
+    // 4. Optionally email the set-password invite (dev via Mailpit, prod via SMTP).
+    //    A send failure must NOT fail the whole conversion — the account is valid
+    //    and RH can re-send via /resend-invite. Log it loudly instead of swallowing.
     if (config.KEYCLOAK_INVITE_EMAIL) {
-      await adminFetch(`/users/${id}/execute-actions-email`, {
+      const inviteRes = await adminFetch(executeActionsEmailPath(id), {
         method: 'PUT',
         body: JSON.stringify(['UPDATE_PASSWORD']),
       });
+      if (!inviteRes.ok) {
+        logger.warn(
+          { status: inviteRes.status, userId: id },
+          'Consultant provisioned but the set-password invite email failed; resend it from the UI',
+        );
+      }
+    } else {
+      logger.info(
+        { userId: id },
+        'KEYCLOAK_INVITE_EMAIL is off — skipping the set-password invite email (set it to true to enable)',
+      );
     }
 
     return { id };

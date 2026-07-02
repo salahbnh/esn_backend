@@ -113,3 +113,12 @@ export async function listConsultantDocuments(req: Request, res: Response): Prom
   const result = await service.listConsultantDocuments(param(req, 'id'), query);
   res.status(200).json(result);
 }
+
+// ---------------------------------------------------------------------------
+// Onboarding — resend the set-password invite
+// ---------------------------------------------------------------------------
+
+export async function resendInvite(req: Request, res: Response): Promise<void> {
+  await service.resendConsultantInvite(param(req, 'id'), actorId(req));
+  res.status(204).end();
+}

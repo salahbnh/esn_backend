@@ -38,6 +38,16 @@ vi.mock('../src/lib/keycloak.js', () => ({
   }),
 }));
 
+// The resend-invite endpoint delegates to Keycloak's execute-actions-email; mock
+// the admin client so the test never touches a real identity provider.
+vi.mock('../src/lib/keycloak-admin.js', () => ({
+  provisionUser: vi.fn(async () => ({ id: 'kc-x' })),
+  deleteUser: vi.fn(async () => undefined),
+  activateUser: vi.fn(async () => undefined),
+  checkKeycloakUsernameExists: vi.fn(async () => false),
+  resendInvite: vi.fn(async () => undefined),
+}));
+
 import { buildApp } from '../src/app.js';
 import { prisma } from '../src/lib/prisma.js';
 
@@ -261,6 +271,51 @@ describe('PATCH /api/consultants/:id/status', () => {
       .set('Authorization', as('RH'))
       .send({ status: 'AVAILABLE' });
     expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Onboarding — POST /:id/resend-invite (RH/DIRECTION only)
+// ---------------------------------------------------------------------------
+
+describe('POST /api/consultants/:id/resend-invite', () => {
+  it('RH -> 204', async () => {
+    const c = await seedConsultant('CONSULTANT_R', 'r@internal.test');
+    const res = await request(app)
+      .post(`/api/consultants/${c.consultant.id}/resend-invite`)
+      .set('Authorization', as('RH'));
+    expect(res.status).toBe(204);
+  });
+
+  it('DIRECTION -> 204', async () => {
+    const c = await seedConsultant('CONSULTANT_D', 'd@internal.test');
+    const res = await request(app)
+      .post(`/api/consultants/${c.consultant.id}/resend-invite`)
+      .set('Authorization', as('DIRECTION'));
+    expect(res.status).toBe(204);
+  });
+
+  it('MANAGER -> 403', async () => {
+    const c = await seedConsultant('CONSULTANT_M', 'm@internal.test');
+    const res = await request(app)
+      .post(`/api/consultants/${c.consultant.id}/resend-invite`)
+      .set('Authorization', as('MANAGER'));
+    expect(res.status).toBe(403);
+  });
+
+  it('CONSULTANT -> 403', async () => {
+    const c = await seedConsultant('CONSULTANT_S', 's@internal.test');
+    const res = await request(app)
+      .post(`/api/consultants/${c.consultant.id}/resend-invite`)
+      .set('Authorization', as('CONSULTANT_S'));
+    expect(res.status).toBe(403);
+  });
+
+  it('RH on unknown id -> 404', async () => {
+    const res = await request(app)
+      .post('/api/consultants/clnonexistentxxxxxxxxxxxxx/resend-invite')
+      .set('Authorization', as('RH'));
+    expect(res.status).toBe(404);
   });
 });
 

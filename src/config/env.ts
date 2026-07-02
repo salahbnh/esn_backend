@@ -23,11 +23,19 @@ const envSchema = z.object({
   KEYCLOAK_REALM: z.string().min(1),
   KEYCLOAK_ADMIN_CLIENT_ID: z.string().min(1),
   KEYCLOAK_ADMIN_CLIENT_SECRET: z.string().min(1),
-  // When true (prod with SMTP configured), email the set-password/verify invite.
+  // When true (dev with Mailpit, or prod with SMTP configured), email the
+  // set-password/verify invite on consultant provisioning.
   KEYCLOAK_INVITE_EMAIL: z
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  // Public frontend client id — used to scope the set-password invite link so it
+  // redirects back to the app (not the Keycloak account console).
+  KEYCLOAK_FRONTEND_CLIENT_ID: z.string().min(1).default('esn-frontend'),
+
+  // Company email domain for the identity generated when a candidate is converted
+  // to a consultant (e.g. prenom.nom@esn.local). Keeps internal logins consistent.
+  COMPANY_EMAIL_DOMAIN: z.string().min(1).default('esn.local'),
 
   S3_ENDPOINT: z.string().url(),
   S3_ACCESS_KEY: z.string().min(1),

@@ -10,21 +10,33 @@ vi.mock('../../lib/keycloak-admin.js', () => ({
   provisionUser: vi.fn(),
   deleteUser: vi.fn(),
   activateUser: vi.fn(),
+  checkKeycloakUsernameExists: vi.fn(),
 }));
 // Stub the logger so importing the service doesn't pull in the env-validating
 // config module (which calls process.exit on missing env in the unit runner).
 vi.mock('../../lib/logger.js', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+// The service now imports config directly (for COMPANY_EMAIL_DOMAIN). Mock it so
+// the unit runner never evaluates env.ts (which calls process.exit on missing env).
+vi.mock('../../config/env.js', () => ({
+  config: { COMPANY_EMAIL_DOMAIN: 'esn.local', KEYCLOAK_FRONTEND_CLIENT_ID: 'esn-frontend' },
+}));
 
 import * as repo from './recruitment.repository.js';
-import { provisionUser, deleteUser, activateUser } from '../../lib/keycloak-admin.js';
+import {
+  provisionUser,
+  deleteUser,
+  activateUser,
+  checkKeycloakUsernameExists,
+} from '../../lib/keycloak-admin.js';
 import * as service from './recruitment.service.js';
 
 const mockRepo = vi.mocked(repo);
 const mockProvision = vi.mocked(provisionUser);
 const mockDelete = vi.mocked(deleteUser);
 const mockActivate = vi.mocked(activateUser);
+const mockCheckKc = vi.mocked(checkKeycloakUsernameExists);
 
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
@@ -46,6 +58,10 @@ function candidate(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockRepo.writeAuditLog.mockResolvedValue(undefined);
+  // Default: the generated company email is free in both DB and Keycloak, so the
+  // collision loop breaks on the first iteration. Individual tests override these.
+  mockRepo.findUserByEmail.mockResolvedValue(null);
+  mockCheckKc.mockResolvedValue(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -309,20 +325,9 @@ describe('convertToConsultant', () => {
     expect(mockProvision).not.toHaveBeenCalled();
   });
 
-  it('throws 409 when a user already exists for the email', async () => {
+  it('happy path: provisions with a generated company email, runs the repo tx, then activates', async () => {
     mockRepo.findCandidateById.mockResolvedValue(candidate({ status: 'VALIDATED' }));
     mockRepo.findConsultantByCandidateId.mockResolvedValue(null);
-    mockRepo.findUserByEmail.mockResolvedValue({ id: 'user1' });
-    await expect(service.convertToConsultant('cand1', body, 'actor1')).rejects.toMatchObject({
-      statusCode: 409,
-    });
-    expect(mockProvision).not.toHaveBeenCalled();
-  });
-
-  it('happy path: provisions, runs the repo transaction, then activates the account', async () => {
-    mockRepo.findCandidateById.mockResolvedValue(candidate({ status: 'VALIDATED' }));
-    mockRepo.findConsultantByCandidateId.mockResolvedValue(null);
-    mockRepo.findUserByEmail.mockResolvedValue(null);
     mockProvision.mockResolvedValue({ id: 'kc-123' });
     mockActivate.mockResolvedValue(undefined);
     mockRepo.createConsultantFromCandidate.mockResolvedValue({
@@ -332,15 +337,61 @@ describe('convertToConsultant', () => {
 
     const result = await service.convertToConsultant('cand1', body, 'actor1');
 
+    // Login identity is the generated company email, NOT the personal one.
     expect(mockProvision).toHaveBeenCalledWith(
-      expect.objectContaining({ email: 'ada@example.com', realmRole: 'CONSULTANT' }),
+      expect.objectContaining({ email: 'ada.lovelace@esn.local', realmRole: 'CONSULTANT' }),
     );
     expect(mockRepo.createConsultantFromCandidate).toHaveBeenCalledWith(
-      expect.objectContaining({ keycloakId: 'kc-123', candidateId: 'cand1', actorId: 'actor1' }),
+      expect.objectContaining({
+        email: 'ada.lovelace@esn.local',
+        keycloakId: 'kc-123',
+        candidateId: 'cand1',
+        actorId: 'actor1',
+      }),
     );
     expect(mockActivate).toHaveBeenCalledWith('kc-123');
     expect(result.consultant).toMatchObject({ id: 'cons1' });
     expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('suffixes the company email when the base is taken in the DB', async () => {
+    mockRepo.findCandidateById.mockResolvedValue(candidate({ status: 'VALIDATED' }));
+    mockRepo.findConsultantByCandidateId.mockResolvedValue(null);
+    // Base email collides in the DB; the suffixed one is free.
+    mockRepo.findUserByEmail.mockImplementation(async (email: string) =>
+      email === 'ada.lovelace@esn.local' ? ({ id: 'user1' } as never) : null,
+    );
+    mockProvision.mockResolvedValue({ id: 'kc-123' });
+    mockActivate.mockResolvedValue(undefined);
+    mockRepo.createConsultantFromCandidate.mockResolvedValue({
+      candidate: candidate({ status: 'HIRED' }),
+      consultant: { id: 'cons1' } as never,
+    });
+
+    await service.convertToConsultant('cand1', body, 'actor1');
+
+    expect(mockProvision).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'ada.lovelace2@esn.local' }),
+    );
+  });
+
+  it('suffixes the company email when the base is taken in Keycloak', async () => {
+    mockRepo.findCandidateById.mockResolvedValue(candidate({ status: 'VALIDATED' }));
+    mockRepo.findConsultantByCandidateId.mockResolvedValue(null);
+    // Base free in DB but taken in Keycloak; the suffixed one is free in both.
+    mockCheckKc.mockImplementation(async (email: string) => email === 'ada.lovelace@esn.local');
+    mockProvision.mockResolvedValue({ id: 'kc-123' });
+    mockActivate.mockResolvedValue(undefined);
+    mockRepo.createConsultantFromCandidate.mockResolvedValue({
+      candidate: candidate({ status: 'HIRED' }),
+      consultant: { id: 'cons1' } as never,
+    });
+
+    await service.convertToConsultant('cand1', body, 'actor1');
+
+    expect(mockProvision).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'ada.lovelace2@esn.local' }),
+    );
   });
 
   it('still returns success when activation fails after the DB commits', async () => {

@@ -26,6 +26,7 @@ import { OwnAssignmentsQuerySchema } from '../staffing/staffing.schema.js';
  * GET    /:id               RH, MANAGER, DIRECTION
  * PATCH  /:id               RH, DIRECTION
  * PATCH  /:id/status        RH, MANAGER, DIRECTION
+ * POST   /:id/resend-invite RH, DIRECTION
  * GET    /:id/documents     RH, DIRECTION; CONSULTANT (own only)
  *
  * CRITICAL: the literal `/me` routes are declared BEFORE `/:id` so Express does
@@ -92,6 +93,15 @@ consultantsRouter.patch(
   rbac('RH', 'MANAGER', 'DIRECTION'),
   validate({ params: IdParamSchema, body: StatusChangeBodySchema }),
   asyncHandler(controller.changeStatus),
+);
+
+// --- Onboarding: resend set-password invite (RH/DIRECTION) -----------------
+
+consultantsRouter.post(
+  '/:id/resend-invite',
+  rbac('RH', 'DIRECTION'),
+  validate({ params: IdParamSchema }),
+  asyncHandler(controller.resendInvite),
 );
 
 // --- Documents metadata (dual-role: Option A inline branch) ----------------
