@@ -6,12 +6,14 @@ import { asyncHandler } from '../../middleware/async-handler.js';
 import * as controller from './contracts.controller.js';
 import * as contractsService from './contracts.service.js';
 import {
-  AttachSignedPdfBodySchema,
+  ConsultantSignBodySchema,
+  CountersignBodySchema,
   CreateAmendmentBodySchema,
   CreateContractBodySchema,
   IdParamSchema,
   ListContractsQuerySchema,
   PaginationQuerySchema,
+  RejectContractBodySchema,
   UpdateContractBodySchema,
   ValidateStepBodySchema,
 } from './contracts.schema.js';
@@ -20,21 +22,26 @@ import {
  * Contracts routes — mounted at /api/contracts. Authorization is declared here
  * (server-side), never in the controller/UI.
  *
- * POST   /                  RH, DIRECTION
- * GET    /                  RH, MANAGER, DIRECTION
- * GET    /:id               RH, MANAGER, DIRECTION; CONSULTANT (own only)
- * PATCH  /:id               RH, DIRECTION (DRAFT only)
- * PATCH  /:id/submit        RH, DIRECTION
- * PATCH  /:id/validate      RH, MANAGER, DIRECTION (step→role gate in service)
- * POST   /:id/generate-pdf  RH, DIRECTION (in-app PDF; guarded ready + complete)
- * PATCH  /:id/sign          RH, DIRECTION
- * PATCH  /:id/archive       RH, DIRECTION
- * POST   /:id/amendments    RH, DIRECTION
- * GET    /:id/amendments    RH, MANAGER, DIRECTION
+ * POST   /                     RH, DIRECTION
+ * GET    /                     RH, MANAGER, DIRECTION
+ * GET    /mine                 CONSULTANT (own contracts; auto-scoped by userId)
+ * GET    /:id                  RH, MANAGER, DIRECTION; CONSULTANT (own only)
+ * PATCH  /:id                  RH, DIRECTION (DRAFT only)
+ * PATCH  /:id/submit           RH, DIRECTION
+ * PATCH  /:id/validate         RH, MANAGER, DIRECTION (step→role gate in service)
+ * POST   /:id/generate-pdf     RH, DIRECTION (in-app PDF; guarded ready + complete)
+ * PATCH  /:id/consultant-sign  CONSULTANT (own only) — in-app signature stamp
+ * PATCH  /:id/reject           CONSULTANT (own only) — reject with reason → DRAFT
+ * PATCH  /:id/countersign      RH, DIRECTION — company countersign → SIGNED
+ * PATCH  /:id/archive          RH, DIRECTION
+ * POST   /:id/amendments       RH, DIRECTION
+ * GET    /:id/amendments       RH, MANAGER, DIRECTION
  *
- * The CONSULTANT own-contract read is gated by `requireOwnershipFor('CONSULTANT',
- * resolver)`; the resolver calls the contracts SERVICE (never the repository) to
- * resolve the owning consultant's userId from the DB — never from the request.
+ * The CONSULTANT own-contract read/sign/reject is gated by
+ * `requireOwnershipFor('CONSULTANT', resolver)`; the resolver calls the contracts
+ * SERVICE (never the repository) to resolve the owning consultant's userId from
+ * the DB — never from the request. `GET /mine` is declared BEFORE `/:id` so the
+ * literal segment wins over the cuid param.
  */
 export const contractsRouter = Router();
 
@@ -54,6 +61,14 @@ contractsRouter.get(
   rbac('RH', 'MANAGER', 'DIRECTION'),
   validate({ query: ListContractsQuerySchema }),
   asyncHandler(controller.listContracts),
+);
+
+// --- Consultant self-service — MUST precede `/:id` so "mine" is not a cuid param
+contractsRouter.get(
+  '/mine',
+  rbac('CONSULTANT'),
+  validate({ query: PaginationQuerySchema }),
+  asyncHandler(controller.listMyContracts),
 );
 
 // --- Amendments (declared before /:id-only routes for clarity) -------------
@@ -95,11 +110,34 @@ contractsRouter.post(
   asyncHandler(controller.generateContractPdf),
 );
 
+// Consultant signs / rejects their OWN contract (ownership resolved from the DB).
+// Ownership composed after validate — consistent with `GET /:id` in this file.
 contractsRouter.patch(
-  '/:id/sign',
+  '/:id/consultant-sign',
+  rbac('CONSULTANT'),
+  validate({ params: IdParamSchema, body: ConsultantSignBodySchema }),
+  requireOwnershipFor('CONSULTANT', (req) =>
+    contractsService.resolveContractOwnerUserId(req.params['id'] ?? ''),
+  ),
+  asyncHandler(controller.consultantSignContract),
+);
+
+contractsRouter.patch(
+  '/:id/reject',
+  rbac('CONSULTANT'),
+  validate({ params: IdParamSchema, body: RejectContractBodySchema }),
+  requireOwnershipFor('CONSULTANT', (req) =>
+    contractsService.resolveContractOwnerUserId(req.params['id'] ?? ''),
+  ),
+  asyncHandler(controller.rejectContract),
+);
+
+// Company countersign (RH/DIRECTION) → SIGNED.
+contractsRouter.patch(
+  '/:id/countersign',
   rbac('RH', 'DIRECTION'),
-  validate({ params: IdParamSchema, body: AttachSignedPdfBodySchema }),
-  asyncHandler(controller.signContract),
+  validate({ params: IdParamSchema, body: CountersignBodySchema }),
+  asyncHandler(controller.countersignContract),
 );
 
 contractsRouter.patch(

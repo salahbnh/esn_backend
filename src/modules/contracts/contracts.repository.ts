@@ -140,6 +140,39 @@ export function findValidations(contractId: string): Promise<ContractValidation[
   return prisma.contractValidation.findMany({ where: { contractId } });
 }
 
+/** Resolve a user's display name (for the signature stamp). */
+export async function findActorName(userId: string): Promise<string | null> {
+  const u = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { firstName: true, lastName: true },
+  });
+  return u ? `${u.firstName} ${u.lastName}` : null;
+}
+
+/** List the contracts owned by the consultant behind this userId (self-service). */
+export async function listContractsForConsultant(userId: string, pagination: Pagination) {
+  const consultant = await prisma.consultant.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  if (!consultant) {
+    return { items: [], total: 0 };
+  }
+  const where: Prisma.ContractWhereInput = { consultantId: consultant.id };
+  const { skip, take } = paginate(pagination);
+  const [items, total] = await Promise.all([
+    prisma.contract.findMany({
+      where,
+      skip,
+      take,
+      orderBy: { createdAt: 'desc' },
+      include: CONSULTANT_DETAIL_INCLUDE,
+    }),
+    prisma.contract.count({ where }),
+  ]);
+  return { items, total };
+}
+
 // ---------------------------------------------------------------------------
 // List
 // ---------------------------------------------------------------------------
@@ -234,7 +267,8 @@ export function submitForValidation(contractId: string, actorId: string): Promis
   return prisma.$transaction(async (tx) => {
     const transition = await tx.contract.updateMany({
       where: { id: contractId, status: 'DRAFT' },
-      data: { status: 'INTERNAL_VALIDATION' },
+      // Clear any prior consultant rejection reason when re-submitting.
+      data: { status: 'INTERNAL_VALIDATION', rejectionReason: null },
     });
     if (transition.count === 0) {
       throw AppError.conflict('Contract is not in DRAFT', { code: 'SUBMIT_RACE' });
@@ -438,53 +472,151 @@ export function storeGeneratedPdf(input: StoreGeneratedPdfInput): Promise<Genera
 }
 
 // ---------------------------------------------------------------------------
-// Attach signed PDF — validates the Document belongs to this contract (IDOR)
+// Two-party signing — consultant-sign / reject / countersign (each atomic)
 // ---------------------------------------------------------------------------
 
+export interface SignPdfInput {
+  contractId: string;
+  storageKey: string;
+  filename: string;
+  sizeBytes: number;
+  actorId: string;
+  signedAt: Date;
+  signatoryName: string;
+}
+
+/** Create the freshly-stamped PDF Document and repoint generatedPdfId (in-tx). */
+async function replaceGeneratedPdf(
+  tx: Prisma.TransactionClient,
+  input: SignPdfInput,
+): Promise<string> {
+  const doc = await tx.document.create({
+    data: {
+      type: 'CONTRACT',
+      entityType: 'CONTRACT',
+      entityId: input.contractId,
+      filename: input.filename,
+      mimeType: 'application/pdf',
+      sizeBytes: input.sizeBytes,
+      storageKey: input.storageKey,
+      uploadedById: input.actorId,
+    },
+    select: { id: true },
+  });
+  return doc.id;
+}
+
 /**
- * Attach a caller-supplied signed-PDF Document id and move PENDING_SIGNATURE →
- * SIGNED. The Document must exist AND be `entityType=CONTRACT` AND
- * `entityId=contractId` — otherwise a user could attach an arbitrary document.
+ * Consultant signs their own contract: create the stamped PDF, then race-safely
+ * set consultantSignedAt (+ name) on a contract still PENDING_SIGNATURE and not
+ * yet consultant-signed. Stays in PENDING_SIGNATURE (awaits countersignature).
  */
-export function attachSignedPdf(
+export function consultantSignContract(input: SignPdfInput): Promise<Contract> {
+  return prisma.$transaction(async (tx) => {
+    const docId = await replaceGeneratedPdf(tx, input);
+    const transition = await tx.contract.updateMany({
+      where: { id: input.contractId, status: 'PENDING_SIGNATURE', consultantSignedAt: null },
+      data: {
+        generatedPdfId: docId,
+        consultantSignedAt: input.signedAt,
+        consultantSignatoryName: input.signatoryName,
+      },
+    });
+    if (transition.count === 0) {
+      throw AppError.conflict('Contract is not awaiting the consultant signature', {
+        code: 'ALREADY_SIGNED_BY_CONSULTANT',
+      });
+    }
+    await tx.auditLog.create({
+      data: {
+        entityType: 'CONTRACT',
+        entityId: input.contractId,
+        action: 'CONSULTANT_SIGN',
+        actorId: input.actorId,
+        payload: { documentId: docId, signatoryName: input.signatoryName },
+      },
+    });
+    return tx.contract.findUniqueOrThrow({ where: { id: input.contractId } });
+  });
+}
+
+/**
+ * Consultant rejects with a reason: race-safely revert PENDING_SIGNATURE (not yet
+ * signed) → DRAFT, store the reason, and delete the validation rows so a clean
+ * re-submit recreates them (mirrors the validation-reject path).
+ */
+export function rejectContractByConsultant(
   contractId: string,
-  documentId: string,
+  reason: string,
   actorId: string,
 ): Promise<Contract> {
   return prisma.$transaction(async (tx) => {
-    const doc = await tx.document.findFirst({
-      where: { id: documentId, archivedAt: null },
-      select: { id: true, entityType: true, entityId: true },
-    });
-    if (!doc || doc.entityType !== 'CONTRACT' || doc.entityId !== contractId) {
-      throw AppError.badRequest('Document does not belong to this contract', {
-        code: 'INVALID_DOCUMENT',
-      });
-    }
-
-    // Race-safe: only flip a contract still PENDING_SIGNATURE; a concurrent
-    // double-sign aborts here instead of overwriting a different state.
     const transition = await tx.contract.updateMany({
-      where: { id: contractId, status: 'PENDING_SIGNATURE' },
-      data: { signedPdfId: documentId, status: 'SIGNED' },
+      where: { id: contractId, status: 'PENDING_SIGNATURE', consultantSignedAt: null },
+      data: { status: 'DRAFT', rejectionReason: reason },
     });
     if (transition.count === 0) {
-      throw AppError.conflict('Contract is not awaiting signature', {
-        code: 'NOT_PENDING_SIGNATURE',
+      throw AppError.conflict('Contract cannot be rejected in its current state', {
+        code: 'ALREADY_SIGNED_BY_CONSULTANT',
       });
     }
-
+    await tx.contractValidation.deleteMany({ where: { contractId } });
     await tx.auditLog.create({
       data: {
         entityType: 'CONTRACT',
         entityId: contractId,
         action: 'STATUS_CHANGE',
         actorId,
-        payload: { from: 'PENDING_SIGNATURE', to: 'SIGNED', signedPdfId: documentId },
+        payload: { from: 'PENDING_SIGNATURE', to: 'DRAFT', via: 'consultant_reject', reason },
       },
     });
-
     return tx.contract.findUniqueOrThrow({ where: { id: contractId } });
+  });
+}
+
+/**
+ * Company countersigns: create the fully-stamped PDF, then race-safely set
+ * companySignedAt (+ name) and move to SIGNED — only when the consultant has
+ * already signed and no countersignature exists yet.
+ */
+export function countersignContract(input: SignPdfInput): Promise<Contract> {
+  return prisma.$transaction(async (tx) => {
+    const docId = await replaceGeneratedPdf(tx, input);
+    const transition = await tx.contract.updateMany({
+      where: {
+        id: input.contractId,
+        status: 'PENDING_SIGNATURE',
+        consultantSignedAt: { not: null },
+        companySignedAt: null,
+      },
+      data: {
+        generatedPdfId: docId,
+        companySignedAt: input.signedAt,
+        companySignatoryName: input.signatoryName,
+        status: 'SIGNED',
+      },
+    });
+    if (transition.count === 0) {
+      throw AppError.conflict('Contract is not awaiting countersignature', {
+        code: 'NOT_AWAITING_COUNTERSIGN',
+      });
+    }
+    await tx.auditLog.create({
+      data: {
+        entityType: 'CONTRACT',
+        entityId: input.contractId,
+        action: 'STATUS_CHANGE',
+        actorId: input.actorId,
+        payload: {
+          from: 'PENDING_SIGNATURE',
+          to: 'SIGNED',
+          via: 'countersign',
+          documentId: docId,
+          signatoryName: input.signatoryName,
+        },
+      },
+    });
+    return tx.contract.findUniqueOrThrow({ where: { id: input.contractId } });
   });
 }
 

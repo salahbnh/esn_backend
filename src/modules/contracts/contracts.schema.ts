@@ -40,9 +40,13 @@ export const ValidateStepBodySchema = z
   })
   .strict();
 
-export const AttachSignedPdfBodySchema = z
+// Two-party signing. Consultant-sign and countersign carry no body (the actor is
+// the verified user; the signatory name is resolved server-side from the DB).
+export const ConsultantSignBodySchema = z.object({}).strict();
+export const CountersignBodySchema = z.object({}).strict();
+export const RejectContractBodySchema = z
   .object({
-    signedPdfDocumentId: z.string().cuid(),
+    reason: z.string().min(1).max(2000),
   })
   .strict();
 
@@ -74,7 +78,7 @@ export type IdParam = z.infer<typeof IdParamSchema>;
 export type CreateContractBody = z.infer<typeof CreateContractBodySchema>;
 export type UpdateContractBody = z.infer<typeof UpdateContractBodySchema>;
 export type ValidateStepBody = z.infer<typeof ValidateStepBodySchema>;
-export type AttachSignedPdfBody = z.infer<typeof AttachSignedPdfBodySchema>;
+export type RejectContractBody = z.infer<typeof RejectContractBodySchema>;
 export type CreateAmendmentBody = z.infer<typeof CreateAmendmentBodySchema>;
 export type ListContractsQuery = z.infer<typeof ListContractsQuerySchema>;
 export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;

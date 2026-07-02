@@ -2,11 +2,11 @@ import type { Request, Response } from 'express';
 import { AppError } from '../../lib/app-error.js';
 import * as service from './contracts.service.js';
 import type {
-  AttachSignedPdfBody,
   CreateAmendmentBody,
   CreateContractBody,
   ListContractsQuery,
   PaginationQuery,
+  RejectContractBody,
   UpdateContractBody,
   ValidateStepBody,
 } from './contracts.schema.js';
@@ -87,13 +87,25 @@ export async function validateContract(req: Request, res: Response): Promise<voi
   res.status(200).json(contract);
 }
 
-export async function signContract(req: Request, res: Response): Promise<void> {
-  const body = req.body as AttachSignedPdfBody;
-  const contract = await service.signContract(
-    param(req, 'id'),
-    body.signedPdfDocumentId,
-    actorId(req),
-  );
+export async function listMyContracts(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as PaginationQuery;
+  const result = await service.listMyContracts(actorId(req), query);
+  res.status(200).json(result);
+}
+
+export async function consultantSignContract(req: Request, res: Response): Promise<void> {
+  const contract = await service.consultantSignContract(param(req, 'id'), actorId(req));
+  res.status(200).json(contract);
+}
+
+export async function rejectContract(req: Request, res: Response): Promise<void> {
+  const body = req.body as RejectContractBody;
+  const contract = await service.rejectContract(param(req, 'id'), body.reason, actorId(req));
+  res.status(200).json(contract);
+}
+
+export async function countersignContract(req: Request, res: Response): Promise<void> {
+  const contract = await service.countersignContract(param(req, 'id'), actorId(req));
   res.status(200).json(contract);
 }
 

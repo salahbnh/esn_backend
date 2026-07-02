@@ -136,32 +136,33 @@ function validate(token: string, id: string, decision: 'APPROVED' | 'REJECTED' =
     .send({ decision });
 }
 
-/** Drives a fresh contract all the way to SIGNED, returning its id. */
-async function signedContract(consultantId: string, templateId?: string): Promise<string> {
+function generatePdf(token: string, id: string) {
+  return request(app).post(`/api/contracts/${id}/generate-pdf`).set('Authorization', as(token));
+}
+function consultantSign(token: string, id: string) {
+  return request(app).patch(`/api/contracts/${id}/consultant-sign`).set('Authorization', as(token)).send({});
+}
+function countersign(token: string, id: string) {
+  return request(app).patch(`/api/contracts/${id}/countersign`).set('Authorization', as(token)).send({});
+}
+
+/** Drives a fresh contract to PENDING_SIGNATURE with a generated PDF, returning its id. */
+async function pendingSignatureContract(consultantId: string, templateId?: string): Promise<string> {
   const c = await createContract('RH', consultantId, templateId);
   const id = c.body.id as string;
   await submit('RH', id);
   await validate('RH', id);
   await validate('MANAGER', id);
-  await validate('DIRECTION', id);
+  await validate('DIRECTION', id); // -> PENDING_SIGNATURE
+  await generatePdf('RH', id);
+  return id;
+}
 
-  const rh = await prisma.user.findFirstOrThrow({ where: { role: 'RH' } });
-  const doc = await prisma.document.create({
-    data: {
-      type: 'CONTRACT',
-      entityType: 'CONTRACT',
-      entityId: id,
-      filename: 'signed.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 1024,
-      storageKey: `contracts/${id}/signed.pdf`,
-      uploadedById: rh.id,
-    },
-  });
-  await request(app)
-    .patch(`/api/contracts/${id}/sign`)
-    .set('Authorization', as('RH'))
-    .send({ signedPdfDocumentId: doc.id });
+/** Drives a fresh contract all the way to SIGNED (two-party), returning its id. */
+async function signedContract(consultantId: string, templateId?: string): Promise<string> {
+  const id = await pendingSignatureContract(consultantId, templateId);
+  await consultantSign('CONSULTANT_A', id);
+  await countersign('RH', id);
   return id;
 }
 
@@ -294,7 +295,7 @@ describe('PATCH /api/contracts/:id/validate — per-step role gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('happy path', () => {
-  it('create -> submit -> RH/MANAGER/DIRECTION approve -> sign -> archive', async () => {
+  it('create -> submit -> approve x3 -> generate -> consultant-sign -> countersign -> archive', async () => {
     const { consultantId, templateId } = await seedActorsAndContext();
     const c = await createContract('RH', consultantId, templateId);
     const id = c.body.id as string;
@@ -304,28 +305,20 @@ describe('happy path', () => {
     expect((await validate('MANAGER', id)).body.status).toBe('INTERNAL_VALIDATION');
     expect((await validate('DIRECTION', id)).body.status).toBe('PENDING_SIGNATURE');
 
-    // Documents module would normally create this Document row.
-    const rh = await prisma.user.findFirstOrThrow({ where: { role: 'RH' } });
-    const doc = await prisma.document.create({
-      data: {
-        type: 'CONTRACT',
-        entityType: 'CONTRACT',
-        entityId: id,
-        filename: 'signed.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 1024,
-        storageKey: `contracts/${id}/signed.pdf`,
-        uploadedById: rh.id,
-      },
-    });
+    await generatePdf('RH', id);
 
-    const signed = await request(app)
-      .patch(`/api/contracts/${id}/sign`)
-      .set('Authorization', as('RH'))
-      .send({ signedPdfDocumentId: doc.id });
+    // Consultant signs their own contract — stays PENDING_SIGNATURE, awaiting countersign.
+    const signed = await consultantSign('CONSULTANT_A', id);
     expect(signed.status).toBe(200);
-    expect(signed.body.status).toBe('SIGNED');
-    expect(signed.body.signedPdfId).toBe(doc.id);
+    expect(signed.body.status).toBe('PENDING_SIGNATURE');
+    expect(signed.body.consultantSignedAt).not.toBeNull();
+    expect(signed.body.companySignedAt).toBeNull();
+
+    // Company countersigns -> SIGNED.
+    const counter = await countersign('RH', id);
+    expect(counter.status).toBe(200);
+    expect(counter.body.status).toBe('SIGNED');
+    expect(counter.body.companySignedAt).not.toBeNull();
 
     const archived = await request(app)
       .patch(`/api/contracts/${id}/archive`)
@@ -333,70 +326,6 @@ describe('happy path', () => {
     expect(archived.status).toBe(200);
     expect(archived.body.status).toBe('ARCHIVED');
     expect(archived.body.archivedAt).not.toBeNull();
-  });
-
-  it('sign rejects a Document that does not belong to the contract -> 400', async () => {
-    const { consultantId, templateId } = await seedActorsAndContext();
-    const c = await createContract('RH', consultantId, templateId);
-    const id = c.body.id as string;
-    await submit('RH', id);
-    await validate('RH', id);
-    await validate('MANAGER', id);
-    await validate('DIRECTION', id);
-
-    const rh = await prisma.user.findFirstOrThrow({ where: { role: 'RH' } });
-    const doc = await prisma.document.create({
-      data: {
-        type: 'CONTRACT',
-        entityType: 'CONTRACT',
-        entityId: 'some-other-contract-id',
-        filename: 'x.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 1,
-        storageKey: `contracts/other/signed.pdf`,
-        uploadedById: rh.id,
-      },
-    });
-    const res = await request(app)
-      .patch(`/api/contracts/${id}/sign`)
-      .set('Authorization', as('RH'))
-      .send({ signedPdfDocumentId: doc.id });
-    expect(res.status).toBe(400);
-  });
-
-  it('sign rejects a soft-deleted (archived) CONTRACT Document -> 400, stays unsigned', async () => {
-    const { consultantId, templateId } = await seedActorsAndContext();
-    const c = await createContract('RH', consultantId, templateId);
-    const id = c.body.id as string;
-    await submit('RH', id);
-    await validate('RH', id);
-    await validate('MANAGER', id);
-    await validate('DIRECTION', id);
-
-    const rh = await prisma.user.findFirstOrThrow({ where: { role: 'RH' } });
-    const doc = await prisma.document.create({
-      data: {
-        type: 'CONTRACT',
-        entityType: 'CONTRACT',
-        entityId: id,
-        filename: 'signed.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 1024,
-        storageKey: `contracts/${id}/signed.pdf`,
-        uploadedById: rh.id,
-        archivedAt: new Date(),
-      },
-    });
-
-    const res = await request(app)
-      .patch(`/api/contracts/${id}/sign`)
-      .set('Authorization', as('RH'))
-      .send({ signedPdfDocumentId: doc.id });
-    expect(res.status).toBe(400);
-
-    const row = await prisma.contract.findUniqueOrThrow({ where: { id } });
-    expect(row.status).not.toBe('SIGNED');
-    expect(row.signedPdfId).toBeNull();
   });
 
   it('archive is idempotent', async () => {

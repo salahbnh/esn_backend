@@ -11,4 +11,31 @@ describe('renderContractPdf', () => {
     expect(buf.length).toBeGreaterThan(0);
     expect(buf.subarray(0, 4).toString('latin1')).toBe('%PDF');
   });
+
+  const base = { title: 'Contrat', body: 'Corps du contrat.' };
+
+  it('appends a signature section (one block adds bytes)', async () => {
+    const plain = await renderContractPdf(base);
+    const oneSig = await renderContractPdf({
+      ...base,
+      signatures: [{ label: 'Consultant', name: 'Inès Chevalier', date: new Date('2026-07-02') }],
+    });
+    expect(oneSig.subarray(0, 4).toString('latin1')).toBe('%PDF');
+    expect(oneSig.length).toBeGreaterThan(plain.length);
+  });
+
+  it('renders both signatures without throwing (two blocks add more bytes)', async () => {
+    const oneSig = await renderContractPdf({
+      ...base,
+      signatures: [{ label: 'Consultant', name: 'Inès Chevalier', date: new Date('2026-07-02') }],
+    });
+    const twoSig = await renderContractPdf({
+      ...base,
+      signatures: [
+        { label: 'Consultant', name: 'Inès Chevalier', date: new Date('2026-07-02') },
+        { label: 'ESN — Signataire', name: 'RH User', date: new Date('2026-07-03') },
+      ],
+    });
+    expect(twoSig.length).toBeGreaterThan(oneSig.length);
+  });
 });

@@ -353,10 +353,16 @@ model Contract {
   status         ContractStatus @default(DRAFT)
   prefilledData  Json // auto-filled from Consultant
   generatedPdfId String? // generated PDF
-  signedPdfId    String? // uploaded signed PDF
+  signedPdfId    String? // optional uploaded wet-signed scan (document attachment)
   startDate      DateTime?
   endDate        DateTime?
   archivedAt     DateTime?
+  // Two-party in-app signing (not a qualified e-signature). SIGNED once both set.
+  consultantSignedAt      DateTime? // consultant acknowledged/signed
+  consultantSignatoryName String? // consultant name stamped at sign time
+  companySignedAt         DateTime? // RH/DIRECTION countersigned
+  companySignatoryName    String? // company signatory name stamped at countersign
+  rejectionReason         String? // set on consultant reject (→ DRAFT); cleared on re-submit
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 

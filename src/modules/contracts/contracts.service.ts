@@ -6,12 +6,14 @@ import type { Prisma } from '@prisma/client';
 import { buildPrefillData } from './contracts.prefill.js';
 import type { PrefillResult } from './contracts.prefill.js';
 import { renderContractPdf } from '../../lib/pdf.js';
+import type { SignatureBlock } from '../../lib/pdf.js';
 import { buildStorageKey, putObject } from '../../lib/storage.js';
 import { STEP_ROLE_MAP, VALIDATION_STEPS } from './contracts.constants.js';
 import type {
   CreateAmendmentBody,
   CreateContractBody,
   ListContractsQuery,
+  PaginationQuery,
   UpdateContractBody,
 } from './contracts.schema.js';
 
@@ -279,9 +281,78 @@ export async function processValidationStep(
 // Sign + archive
 // ---------------------------------------------------------------------------
 
-export async function signContract(
+/** CONSULTANT self-service: their own contracts (auto-scoped by userId). */
+export async function listMyContracts(
+  userId: string,
+  query: PaginationQuery,
+): Promise<PaginatedResult<ContractListItem>> {
+  const { items, total } = await repo.listContractsForConsultant(userId, {
+    page: query.page,
+    pageSize: query.pageSize,
+  });
+  return paginated(items, total, query.page, query.pageSize);
+}
+
+/**
+ * Re-render the contract body with signature stamps and upload it to object
+ * storage (I/O runs BEFORE the repository $transaction). Returns the pointer the
+ * repository needs to create the new Document row + repoint generatedPdfId.
+ */
+async function uploadStampedPdf(
+  contractId: string,
+  renderedBody: string,
+  signatures: SignatureBlock[],
+): Promise<{ storageKey: string; filename: string; sizeBytes: number }> {
+  const pdf = await renderContractPdf({ title: 'Contrat de travail', body: renderedBody, signatures });
+  const filename = `contract-${contractId}.pdf`;
+  const storageKey = buildStorageKey('CONTRACT', contractId, filename);
+  await putObject({ key: storageKey, body: pdf, contentType: 'application/pdf' });
+  return { storageKey, filename, sizeBytes: pdf.length };
+}
+
+/**
+ * Consultant signs their own contract (in-app acknowledgment). Requires a
+ * generated PDF to stamp; stamps the consultant's name + date and records
+ * consultantSignedAt. Stays PENDING_SIGNATURE, awaiting the company countersign.
+ */
+export async function consultantSignContract(id: string, actorId: string): Promise<Contract> {
+  const contract = await loadContractOr404(id);
+  if (contract.status !== 'PENDING_SIGNATURE') {
+    throw AppError.conflict('Contract is not pending signature', {
+      code: 'NOT_PENDING_SIGNATURE',
+      status: contract.status,
+    });
+  }
+  if (contract.consultantSignedAt) {
+    throw AppError.conflict('You have already signed this contract', {
+      code: 'ALREADY_SIGNED_BY_CONSULTANT',
+    });
+  }
+  if (!contract.generatedPdfId) {
+    throw AppError.badRequest('The contract PDF has not been generated yet', {
+      code: 'CONTRACT_NO_PDF',
+    });
+  }
+  const { renderedBody } = readPrefill(contract.prefilledData);
+  if (renderedBody.trim().length === 0) {
+    throw AppError.badRequest('Contract has no body to render', { code: 'CONTRACT_NO_BODY' });
+  }
+
+  const signatoryName = (await repo.findActorName(actorId)) ?? 'Consultant';
+  const signedAt = new Date();
+  const uploaded = await uploadStampedPdf(id, renderedBody, [
+    { label: 'Consultant', name: signatoryName, date: signedAt },
+  ]);
+  return repo.consultantSignContract({ contractId: id, ...uploaded, actorId, signedAt, signatoryName });
+}
+
+/**
+ * Consultant rejects their own contract with a reason → back to DRAFT (only
+ * before they have signed). RH edits and re-submits for validation.
+ */
+export async function rejectContract(
   id: string,
-  signedPdfDocumentId: string,
+  reason: string,
   actorId: string,
 ): Promise<Contract> {
   const contract = await loadContractOr404(id);
@@ -291,9 +362,53 @@ export async function signContract(
       status: contract.status,
     });
   }
-  // The repository validates the Document belongs to this contract (IDOR guard),
-  // sets signedPdfId + status SIGNED, and audits — all in one $transaction.
-  return repo.attachSignedPdf(id, signedPdfDocumentId, actorId);
+  if (contract.consultantSignedAt) {
+    throw AppError.conflict('You have already signed this contract', {
+      code: 'ALREADY_SIGNED_BY_CONSULTANT',
+    });
+  }
+  return repo.rejectContractByConsultant(id, reason, actorId);
+}
+
+/**
+ * Company (RH/DIRECTION) countersigns after the consultant has signed → SIGNED.
+ * Re-renders the PDF with BOTH signature blocks.
+ */
+export async function countersignContract(id: string, actorId: string): Promise<Contract> {
+  const contract = await loadContractOr404(id);
+  if (contract.status !== 'PENDING_SIGNATURE') {
+    throw AppError.conflict('Contract is not pending signature', {
+      code: 'NOT_PENDING_SIGNATURE',
+      status: contract.status,
+    });
+  }
+  if (!contract.consultantSignedAt) {
+    throw AppError.conflict('The consultant has not signed yet', {
+      code: 'CONSULTANT_NOT_YET_SIGNED',
+    });
+  }
+  if (contract.companySignedAt) {
+    throw AppError.conflict('This contract has already been countersigned', {
+      code: 'ALREADY_COUNTERSIGNED',
+    });
+  }
+  const { renderedBody } = readPrefill(contract.prefilledData);
+  if (renderedBody.trim().length === 0) {
+    throw AppError.badRequest('Contract has no body to render', { code: 'CONTRACT_NO_BODY' });
+  }
+
+  const signatoryName = (await repo.findActorName(actorId)) ?? 'ESN';
+  const signedAt = new Date();
+  const signatures: SignatureBlock[] = [
+    {
+      label: 'Consultant',
+      name: contract.consultantSignatoryName ?? 'Consultant',
+      date: contract.consultantSignedAt,
+    },
+    { label: 'ESN — Signataire', name: signatoryName, date: signedAt },
+  ];
+  const uploaded = await uploadStampedPdf(id, renderedBody, signatures);
+  return repo.countersignContract({ contractId: id, ...uploaded, actorId, signedAt, signatoryName });
 }
 
 export async function archiveContract(id: string, actorId: string): Promise<Contract> {

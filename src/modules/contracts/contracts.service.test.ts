@@ -262,24 +262,133 @@ describe('processValidationStep', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sign guard
+// Two-party signing — consultant-sign / reject / countersign
 // ---------------------------------------------------------------------------
 
-describe('signContract', () => {
-  it('delegates when PENDING_SIGNATURE', async () => {
-    mockRepo.findContractById.mockResolvedValue(contract({ status: 'PENDING_SIGNATURE' }));
-    mockRepo.attachSignedPdf.mockResolvedValue(contract({ status: 'SIGNED' }));
-    const res = await service.signContract('ctr1', 'doc1', 'actor1');
-    expect(res.status).toBe('SIGNED');
-    expect(mockRepo.attachSignedPdf).toHaveBeenCalledWith('ctr1', 'doc1', 'actor1');
+const PENDING = {
+  status: 'PENDING_SIGNATURE' as const,
+  generatedPdfId: 'doc1',
+  prefilledData: { renderedBody: 'Le corps du contrat.', unfilled: [] },
+};
+
+describe('consultantSignContract', () => {
+  beforeEach(() => {
+    mockRepo.findActorName.mockResolvedValue('Inès Chevalier');
+    mockRepo.consultantSignContract.mockResolvedValue(contract({ status: 'PENDING_SIGNATURE' }));
   });
 
-  it('throws 409 when not PENDING_SIGNATURE', async () => {
+  it('renders a one-signature PDF and delegates to the repo', async () => {
+    mockRepo.findContractById.mockResolvedValue(contract({ ...PENDING, consultantSignedAt: null }));
+    await service.consultantSignContract('ctr1', 'user-con');
+    expect(mockRenderPdf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signatures: [expect.objectContaining({ label: 'Consultant', name: 'Inès Chevalier' })],
+      }),
+    );
+    expect(mockPutObject).toHaveBeenCalled();
+    expect(mockRepo.consultantSignContract).toHaveBeenCalledWith(
+      expect.objectContaining({ contractId: 'ctr1', actorId: 'user-con', signatoryName: 'Inès Chevalier' }),
+    );
+  });
+
+  it('409 when not PENDING_SIGNATURE', async () => {
     mockRepo.findContractById.mockResolvedValue(contract({ status: 'DRAFT' }));
-    await expect(service.signContract('ctr1', 'doc1', 'actor1')).rejects.toMatchObject({
+    await expect(service.consultantSignContract('ctr1', 'user-con')).rejects.toMatchObject({
       statusCode: 409,
+      details: { code: 'NOT_PENDING_SIGNATURE' },
     });
-    expect(mockRepo.attachSignedPdf).not.toHaveBeenCalled();
+    expect(mockRepo.consultantSignContract).not.toHaveBeenCalled();
+  });
+
+  it('409 when already signed by the consultant', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({ ...PENDING, consultantSignedAt: new Date() }),
+    );
+    await expect(service.consultantSignContract('ctr1', 'user-con')).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'ALREADY_SIGNED_BY_CONSULTANT' },
+    });
+  });
+
+  it('400 when the PDF has not been generated', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({ status: 'PENDING_SIGNATURE', generatedPdfId: null, consultantSignedAt: null }),
+    );
+    await expect(service.consultantSignContract('ctr1', 'user-con')).rejects.toMatchObject({
+      statusCode: 400,
+      details: { code: 'CONTRACT_NO_PDF' },
+    });
+  });
+});
+
+describe('rejectContract', () => {
+  beforeEach(() => {
+    mockRepo.rejectContractByConsultant.mockResolvedValue(contract({ status: 'DRAFT' }));
+  });
+
+  it('delegates a reject when PENDING_SIGNATURE and unsigned', async () => {
+    mockRepo.findContractById.mockResolvedValue(contract({ ...PENDING, consultantSignedAt: null }));
+    const res = await service.rejectContract('ctr1', 'TJM trop bas', 'user-con');
+    expect(res.status).toBe('DRAFT');
+    expect(mockRepo.rejectContractByConsultant).toHaveBeenCalledWith('ctr1', 'TJM trop bas', 'user-con');
+  });
+
+  it('409 when the consultant has already signed', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({ ...PENDING, consultantSignedAt: new Date() }),
+    );
+    await expect(service.rejectContract('ctr1', 'x', 'user-con')).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'ALREADY_SIGNED_BY_CONSULTANT' },
+    });
+  });
+});
+
+describe('countersignContract', () => {
+  beforeEach(() => {
+    mockRepo.findActorName.mockResolvedValue('RH User');
+    mockRepo.countersignContract.mockResolvedValue(contract({ status: 'SIGNED' }));
+  });
+
+  it('renders a two-signature PDF and moves to SIGNED', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({
+        ...PENDING,
+        consultantSignedAt: new Date('2026-07-02'),
+        consultantSignatoryName: 'Inès Chevalier',
+        companySignedAt: null,
+      }),
+    );
+    const res = await service.countersignContract('ctr1', 'user-rh');
+    expect(res.status).toBe('SIGNED');
+    expect(mockRenderPdf).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signatures: expect.arrayContaining([
+          expect.objectContaining({ label: 'Consultant' }),
+          expect.objectContaining({ label: 'ESN — Signataire', name: 'RH User' }),
+        ]),
+      }),
+    );
+    expect(mockRepo.countersignContract).toHaveBeenCalled();
+  });
+
+  it('409 when the consultant has not signed yet', async () => {
+    mockRepo.findContractById.mockResolvedValue(
+      contract({ ...PENDING, consultantSignedAt: null, companySignedAt: null }),
+    );
+    await expect(service.countersignContract('ctr1', 'user-rh')).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'CONSULTANT_NOT_YET_SIGNED' },
+    });
+    expect(mockRepo.countersignContract).not.toHaveBeenCalled();
+  });
+
+  it('409 when not PENDING_SIGNATURE', async () => {
+    mockRepo.findContractById.mockResolvedValue(contract({ status: 'SIGNED' }));
+    await expect(service.countersignContract('ctr1', 'user-rh')).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'NOT_PENDING_SIGNATURE' },
+    });
   });
 });
 
