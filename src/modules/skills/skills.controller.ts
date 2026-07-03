@@ -16,6 +16,11 @@ function param(req: Request, name: string): string {
   return value;
 }
 
+function actorId(req: Request): string {
+  if (!req.user) throw AppError.unauthorized();
+  return req.user.id;
+}
+
 export async function listSkills(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as ListSkillsQuery;
   const result = await service.listSkills(query);
@@ -24,17 +29,17 @@ export async function listSkills(req: Request, res: Response): Promise<void> {
 
 export async function createSkill(req: Request, res: Response): Promise<void> {
   const body = req.body as CreateSkillBody;
-  const skill = await service.createSkill(body);
+  const skill = await service.createSkill(body, actorId(req));
   res.status(201).json(skill);
 }
 
 export async function updateSkill(req: Request, res: Response): Promise<void> {
   const body = req.body as UpdateSkillBody;
-  const skill = await service.updateSkill(param(req, 'id'), body);
+  const skill = await service.updateSkill(param(req, 'id'), body, actorId(req));
   res.status(200).json(skill);
 }
 
 export async function removeSkill(req: Request, res: Response): Promise<void> {
-  await service.removeSkill(param(req, 'id'));
+  await service.removeSkill(param(req, 'id'), actorId(req));
   res.status(204).end();
 }

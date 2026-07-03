@@ -113,7 +113,7 @@ describe('lifecycle', () => {
     expect(closed.body.status).toBe('CLOSED');
   });
 
-  it('PATCH a PUBLISHED post -> 422', async () => {
+  it('PATCH a PUBLISHED post -> 409 JOB_POST_NOT_DRAFT', async () => {
     const created = await createPost('RH');
     const id = created.body.id;
     await request(app).post(`/api/job-posts/${id}/publish`).set('Authorization', as('RH'));
@@ -121,7 +121,8 @@ describe('lifecycle', () => {
       .patch(`/api/job-posts/${id}`)
       .set('Authorization', as('RH'))
       .send({ title: 'Changed' });
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(409);
+    expect(res.body.error.details.code).toBe('JOB_POST_NOT_DRAFT');
   });
 });
 
@@ -240,6 +241,21 @@ describe('applications triage + link', () => {
     expect(cand.status).toBe('APPLIED');
     expect(cand.source).toBe('PORTAL');
     expect(cand.skills.map((s) => s.name)).toContain('React');
+  });
+
+  it('re-linking an already-linked application -> 409 ALREADY_LINKED', async () => {
+    const id = (await createPost('RH')).body.id;
+    const appRow = await seedApplication(id, 'twice@ext.test');
+    await request(app)
+      .post(`/api/job-posts/applications/${appRow.id}/link`)
+      .set('Authorization', as('RH'))
+      .send({});
+    const second = await request(app)
+      .post(`/api/job-posts/applications/${appRow.id}/link`)
+      .set('Authorization', as('RH'))
+      .send({});
+    expect(second.status).toBe(409);
+    expect(second.body.error.details.code).toBe('ALREADY_LINKED');
   });
 
   it('link surfaces 409 CANDIDATE_IS_CONSULTANT when email is an internal user', async () => {

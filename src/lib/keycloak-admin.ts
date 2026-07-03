@@ -8,8 +8,11 @@ import { logger } from './logger.js';
  * `esn-backend` service account). Used to auto-provision a Keycloak account when
  * a candidate is converted to a consultant.
  *
- * The service account must hold the realm-management roles `manage-users` and
- * `view-users` (granted in keycloak/realm-export.json).
+ * The service account needs ONLY the realm-management role `manage-users`
+ * (granted in keycloak/realm-export.json) — it covers user create/read/update/
+ * delete AND reading a user's assignable realm roles. We deliberately avoid
+ * `view-realm` (broad realm-config read) by looking the CONSULTANT role up via
+ * the user's `role-mappings/realm/available` list rather than `GET /roles/{name}`.
  */
 
 const REALM_BASE = `${config.KEYCLOAK_BASE_URL}/admin/realms/${config.KEYCLOAK_REALM}`;
@@ -150,12 +153,20 @@ export async function provisionUser(input: ProvisionUserInput): Promise<{ id: st
   }
 
   try {
-    // 2. Assign the realm role.
-    const roleRes = await adminFetch(`/roles/${encodeURIComponent(input.realmRole)}`, { method: 'GET' });
-    if (!roleRes.ok) {
+    // 2. Assign the realm role. Look it up via the freshly-created user's
+    //    ASSIGNABLE (available) realm roles — needs only `manage-users`, avoiding
+    //    the broader `view-realm` that `GET /roles/{name}` would require.
+    const availRes = await adminFetch(`/users/${id}/role-mappings/realm/available`, {
+      method: 'GET',
+    });
+    if (!availRes.ok) {
+      throw AppError.internal('Could not read assignable realm roles');
+    }
+    const available = (await availRes.json()) as Array<{ id: string; name: string }>;
+    const role = available.find((r) => r.name === input.realmRole);
+    if (!role) {
       throw AppError.internal(`Realm role ${input.realmRole} not found`);
     }
-    const role = (await roleRes.json()) as { id: string; name: string };
     const mapRes = await adminFetch(`/users/${id}/role-mappings/realm`, {
       method: 'POST',
       body: JSON.stringify([{ id: role.id, name: role.name }]),

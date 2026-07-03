@@ -134,6 +134,18 @@ describe('upload + download', () => {
     expect(res.body).not.toHaveProperty('storageKey');
   });
 
+  it('download is blocked (403) when the file is flagged INFECTED', async () => {
+    await seedUser('RH', 'RH');
+    const { consultant } = await seedConsultant('CONSULTANT_A');
+    const up = await uploadCv('RH', consultant.id);
+    await prisma.document.update({ where: { id: up.body.id }, data: { scanStatus: 'INFECTED' } });
+
+    const res = await request(app)
+      .get(`/api/documents/${up.body.id}/url`)
+      .set('Authorization', as('RH'));
+    expect(res.status).toBe(403);
+  });
+
   it('path-traversal filename is accepted and stored sanitized', async () => {
     await seedUser('RH', 'RH');
     const { consultant } = await seedConsultant('CONSULTANT_A');

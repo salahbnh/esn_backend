@@ -89,7 +89,7 @@ export async function createJobPost(body: CreateJobPostBody, actorId: string) {
 export async function updateJobPost(id: string, body: UpdateJobPostBody, actorId: string) {
   const post = await loadPostOr404(id);
   if (post.status !== 'DRAFT') {
-    throw new AppError(422, 'JOB_POST_NOT_DRAFT', 'Only DRAFT job posts can be edited');
+    throw AppError.conflict('Only DRAFT job posts can be edited', { code: 'JOB_POST_NOT_DRAFT' });
   }
   const updated = await repo.updateJobPost(id, {
     ...(body.title !== undefined ? { title: body.title } : {}),
@@ -115,7 +115,7 @@ export async function updateJobPost(id: string, body: UpdateJobPostBody, actorId
 export async function publishJobPost(id: string, actorId: string) {
   const post = await loadPostOr404(id);
   if (post.status !== 'DRAFT' && post.status !== 'CLOSED') {
-    throw new AppError(422, 'JOB_POST_NOT_PUBLISHABLE', 'Only DRAFT or CLOSED posts can be published');
+    throw AppError.conflict('Only DRAFT or CLOSED posts can be published', { code: 'JOB_POST_NOT_PUBLISHABLE' });
   }
   // Rotate the public token on publish/republish (invalidates any leaked link).
   const updated = await repo.publishJobPost(id, generatePublicToken(), new Date());
@@ -132,7 +132,7 @@ export async function publishJobPost(id: string, actorId: string) {
 export async function closeJobPost(id: string, actorId: string) {
   const post = await loadPostOr404(id);
   if (post.status !== 'PUBLISHED') {
-    throw new AppError(422, 'JOB_POST_NOT_PUBLISHED', 'Only PUBLISHED posts can be closed');
+    throw AppError.conflict('Only PUBLISHED posts can be closed', { code: 'JOB_POST_NOT_PUBLISHED' });
   }
   const updated = await repo.setJobPostStatus(id, 'CLOSED');
   await repo.writeAuditLog({

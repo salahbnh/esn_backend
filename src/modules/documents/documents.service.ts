@@ -1,4 +1,5 @@
 import type { DocumentType } from '@prisma/client';
+import { fileTypeFromBuffer } from 'file-type';
 import { AppError } from '../../lib/app-error.js';
 import { buildStorageKey, getPresignedGetUrl, putObject } from '../../lib/storage.js';
 import * as access from './documents.access.js';
@@ -92,10 +93,20 @@ export async function uploadDocument(
   }
 
   // 3. Mime allowlist (NOTE: multer mimetype is client-controlled).
-  // TODO(magic-bytes): verify the file signature with the file-type package.
   const allowed = MIME_ALLOWLIST[meta.type];
   if (!allowed.includes(file.mimetype)) {
     throw AppError.badRequest('File type not allowed for this document type', {
+      code: 'BAD_MIME',
+    });
+  }
+
+  // 3b. Magic-byte verification — don't trust the client mimetype. If a signature
+  // is detectable it must be allowed for this doc type (catches e.g. an executable
+  // renamed .pdf). Legacy CFB office files (.doc/.xls) sniff as x-cfb and pass
+  // through to the declared-mime allowlist already checked above.
+  const sniff = await fileTypeFromBuffer(file.buffer);
+  if (sniff && sniff.mime !== 'application/x-cfb' && !allowed.includes(sniff.mime)) {
+    throw AppError.badRequest('File content does not match its declared type', {
       code: 'BAD_MIME',
     });
   }
@@ -144,6 +155,13 @@ export async function getDocumentUrl(user: AccessUser, id: string): Promise<Pres
   }
 
   await access.assertCanDownload(user, { entityType: doc.entityType, entityId: doc.entityId });
+
+  // AV quarantine gate: never hand out a link to a file flagged INFECTED. (We
+  // block only INFECTED, not non-CLEAN, because no scanner sets CLEAN yet — public
+  // uploads sit at PENDING; tighten to `!== 'CLEAN'` once a real AV worker lands.)
+  if (doc.scanStatus === 'INFECTED') {
+    throw AppError.forbidden('This file failed a security scan');
+  }
 
   const url = await getPresignedGetUrl(doc.storageKey, URL_EXPIRY_SEC);
   const expiresAt = new Date(Date.now() + URL_EXPIRY_SEC * 1000).toISOString();

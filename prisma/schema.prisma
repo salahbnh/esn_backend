@@ -90,6 +90,7 @@ enum EntityType {
   ASSIGNMENT
   JOB_POST
   APPLICATION
+  SKILL
 }
 
 // --- Job Offers + public application portal --------------------------------
@@ -166,7 +167,6 @@ model User {
   uploadedDocuments     Document[]             @relation("DocumentUploader")
   jobPostsAuthored      JobPost[]              @relation("JobPostAuthor")
   reviewedApplications  Application[]          @relation("ApplicationReviewer")
-  notifications         Notification[]
 
   @@index([role])
 }
@@ -472,7 +472,7 @@ model ContractAmendment {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-cutting: Documents, Audit, Notifications
+// Cross-cutting: Documents, Audit
 // ---------------------------------------------------------------------------
 
 /// Stockage centralisé — metadata only (bytes live in MinIO/S3)
@@ -510,23 +510,6 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([actorId])
-}
-
-/// workflow notifications RH / alertes
-model Notification {
-  id        String    @id @default(cuid())
-  userId    String
-  type      String
-  title     String
-  body      String?
-  link      String?
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, readAt])
 }
 
 // ---------------------------------------------------------------------------

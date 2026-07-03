@@ -37,6 +37,7 @@ const UPLOAD_MATRIX: Record<EntityType, Role[]> = {
   // APPLICATION docs are written only by the anonymous public portal, which
   // bypasses this auth matrix entirely; the entry exists so the Record is total.
   APPLICATION: [],
+  SKILL: [], // skills carry no documents; entry exists so the Record is total
 };
 
 // DocumentTypes a CONSULTANT may upload to their own CONSULTANT entity.
@@ -54,6 +55,7 @@ const DOWNLOAD_MATRIX: Record<EntityType, Role[]> = {
   CLIENT: ['RH', 'DIRECTION', 'MANAGER'],
   JOB_POST: ['RH', 'DIRECTION'],
   APPLICATION: ['RH', 'MANAGER', 'DIRECTION'],
+  SKILL: [],
 };
 
 /**

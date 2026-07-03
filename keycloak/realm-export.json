@@ -149,7 +149,7 @@
       "enabled": true,
       "serviceAccountClientId": "esn-backend",
       "clientRoles": {
-        "realm-management": ["manage-users", "view-users", "view-realm"]
+        "realm-management": ["manage-users"]
       }
     }
   ]

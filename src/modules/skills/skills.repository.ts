@@ -1,4 +1,4 @@
-import type { Prisma, Skill } from '@prisma/client';
+import type { EntityType, Prisma, Skill } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 
 /**
@@ -68,6 +68,18 @@ export function updateSkill(id: string, data: UpdateSkillData): Promise<Skill> {
 
 export function deleteSkill(id: string): Promise<Skill> {
   return prisma.skill.delete({ where: { id } });
+}
+
+export interface AuditLogData {
+  entityType: EntityType;
+  entityId: string;
+  action: string;
+  actorId: string;
+  payload: Prisma.InputJsonValue;
+}
+
+export function writeAuditLog(entry: AuditLogData): Promise<unknown> {
+  return prisma.auditLog.create({ data: entry });
 }
 
 /** Count how many candidates / consultants / missions reference this skill. */

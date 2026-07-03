@@ -33,13 +33,13 @@ beforeEach(() => {
 describe('createSkill', () => {
   it('creates a skill, trimming name + normalizing category', async () => {
     mockRepo.createSkill.mockResolvedValue(skill());
-    await service.createSkill({ name: '  Go  ', category: 'backend' });
+    await service.createSkill({ name: '  Go  ', category: 'backend' }, 'actor');
     expect(mockRepo.createSkill).toHaveBeenCalledWith({ name: 'Go', category: 'Backend' });
   });
 
   it('maps a unique-name violation to 409 SKILL_ALREADY_EXISTS', async () => {
     mockRepo.createSkill.mockRejectedValue(p2002());
-    await expect(service.createSkill({ name: 'Go' })).rejects.toMatchObject({
+    await expect(service.createSkill({ name: 'Go' }, 'actor')).rejects.toMatchObject({
       statusCode: 409,
       details: { code: 'SKILL_ALREADY_EXISTS' },
     });
@@ -49,7 +49,7 @@ describe('createSkill', () => {
 describe('updateSkill', () => {
   it('404 when the skill does not exist', async () => {
     mockRepo.findSkillById.mockResolvedValue(null);
-    await expect(service.updateSkill('missing', { name: 'X' })).rejects.toMatchObject({
+    await expect(service.updateSkill('missing', { name: 'X' }, 'actor')).rejects.toMatchObject({
       statusCode: 404,
     });
     expect(mockRepo.updateSkill).not.toHaveBeenCalled();
@@ -58,7 +58,7 @@ describe('updateSkill', () => {
   it('maps a name collision to 409', async () => {
     mockRepo.findSkillById.mockResolvedValue(skill());
     mockRepo.updateSkill.mockRejectedValue(p2002());
-    await expect(service.updateSkill('s1', { name: 'Rust' })).rejects.toMatchObject({
+    await expect(service.updateSkill('s1', { name: 'Rust' }, 'actor')).rejects.toMatchObject({
       statusCode: 409,
       details: { code: 'SKILL_ALREADY_EXISTS' },
     });
@@ -68,7 +68,7 @@ describe('updateSkill', () => {
 describe('removeSkill', () => {
   it('404 when the skill does not exist', async () => {
     mockRepo.findSkillById.mockResolvedValue(null);
-    await expect(service.removeSkill('missing')).rejects.toMatchObject({ statusCode: 404 });
+    await expect(service.removeSkill('missing', 'actor')).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it('409 SKILL_IN_USE with a breakdown when referenced', async () => {
@@ -79,7 +79,7 @@ describe('removeSkill', () => {
       missions: 1,
       total: 3,
     });
-    await expect(service.removeSkill('s1')).rejects.toMatchObject({
+    await expect(service.removeSkill('s1', 'actor')).rejects.toMatchObject({
       statusCode: 409,
       details: { code: 'SKILL_IN_USE', total: 3, breakdown: { consultants: 2, missions: 1 } },
     });
@@ -90,7 +90,7 @@ describe('removeSkill', () => {
     mockRepo.findSkillById.mockResolvedValue(skill());
     mockRepo.countSkillUsage.mockResolvedValue({ candidates: 0, consultants: 0, missions: 0, total: 0 });
     mockRepo.deleteSkill.mockResolvedValue(skill());
-    await service.removeSkill('s1');
+    await service.removeSkill('s1', 'actor');
     expect(mockRepo.deleteSkill).toHaveBeenCalledWith('s1');
   });
 });

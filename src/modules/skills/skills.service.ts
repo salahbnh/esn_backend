@@ -45,9 +45,10 @@ export async function listSkills(query: ListSkillsQuery): Promise<PaginatedResul
   return paginated(items, total, query.page, query.pageSize);
 }
 
-export async function createSkill(body: CreateSkillBody) {
+export async function createSkill(body: CreateSkillBody, actorId: string) {
+  let skill;
   try {
-    return await repo.createSkill({
+    skill = await repo.createSkill({
       name: body.name.trim(),
       ...(normalizeCategory(body.category) !== undefined
         ? { category: normalizeCategory(body.category) }
@@ -61,15 +62,24 @@ export async function createSkill(body: CreateSkillBody) {
     }
     throw err;
   }
+  await repo.writeAuditLog({
+    entityType: 'SKILL',
+    entityId: skill.id,
+    action: 'CREATE',
+    actorId,
+    payload: { name: skill.name },
+  });
+  return skill;
 }
 
-export async function updateSkill(id: string, body: UpdateSkillBody) {
+export async function updateSkill(id: string, body: UpdateSkillBody, actorId: string) {
   const existing = await repo.findSkillById(id);
   if (!existing) {
     throw AppError.notFound('Skill not found');
   }
+  let skill;
   try {
-    return await repo.updateSkill(id, {
+    skill = await repo.updateSkill(id, {
       ...(body.name !== undefined ? { name: body.name.trim() } : {}),
       ...(body.category !== undefined ? { category: normalizeCategory(body.category) ?? null } : {}),
     });
@@ -81,9 +91,17 @@ export async function updateSkill(id: string, body: UpdateSkillBody) {
     }
     throw err;
   }
+  await repo.writeAuditLog({
+    entityType: 'SKILL',
+    entityId: id,
+    action: 'UPDATE',
+    actorId,
+    payload: { fields: Object.keys(body) },
+  });
+  return skill;
 }
 
-export async function removeSkill(id: string): Promise<void> {
+export async function removeSkill(id: string, actorId: string): Promise<void> {
   const existing = await repo.findSkillById(id);
   if (!existing) {
     throw AppError.notFound('Skill not found');
@@ -101,4 +119,11 @@ export async function removeSkill(id: string): Promise<void> {
     });
   }
   await repo.deleteSkill(id);
+  await repo.writeAuditLog({
+    entityType: 'SKILL',
+    entityId: id,
+    action: 'DELETE',
+    actorId,
+    payload: { name: existing.name },
+  });
 }
