@@ -17,6 +17,7 @@ import { contractTemplatesRouter } from './modules/contract-templates/contract-t
 import { contractsRouter } from './modules/contracts/contracts.routes.js';
 import { documentsRouter } from './modules/documents/documents.routes.js';
 import { reportingRouter } from './modules/reporting/reporting.routes.js';
+import { skillsRouter } from './modules/skills/skills.routes.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -58,6 +59,7 @@ export function buildApp(): Express {
   app.use('/api/contracts', contractsRouter);
   app.use('/api/documents', documentsRouter);
   app.use('/api/reports', reportingRouter);
+  app.use('/api/skills', skillsRouter);
 
   // Unknown route -> 404 (handled by central error handler).
   app.use('/api', (_req, _res, next) => {
