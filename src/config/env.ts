@@ -42,6 +42,14 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().min(1),
   S3_BUCKET: z.string().min(1),
   S3_REGION: z.string().min(1),
+
+  // Public application portal (the app's only unauthenticated surface).
+  // Turnstile CAPTCHA is OPTIONAL — when unset, only the honeypot gates spam (dev).
+  TURNSTILE_SECRET: z.string().optional(),
+  PUBLIC_UPLOAD_PREFIX: z.string().default('public-applications'),
+  PUBLIC_RATE_LIMIT_GET_MAX: z.coerce.number().int().positive().default(30),
+  PUBLIC_RATE_LIMIT_APPLY_IP_MAX: z.coerce.number().int().positive().default(5),
+  PUBLIC_RATE_LIMIT_APPLY_TOKEN_MAX: z.coerce.number().int().positive().default(10),
 });
 
 const parsed = envSchema.safeParse(process.env);

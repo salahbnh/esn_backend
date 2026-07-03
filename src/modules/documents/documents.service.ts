@@ -31,6 +31,7 @@ const MIME_ALLOWLIST: Record<DocumentType, string[]> = {
   CONTRACT_AMENDMENT: [PDF],
   PROPOSAL: [PDF],
   MISSION_DOC: [PDF, DOC, DOCX, XLS, XLSX],
+  COVER_LETTER: [PDF, DOC, DOCX],
   OTHER: [PDF, DOC, DOCX, PNG, JPEG],
 };
 

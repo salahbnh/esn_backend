@@ -18,6 +18,8 @@ import { contractsRouter } from './modules/contracts/contracts.routes.js';
 import { documentsRouter } from './modules/documents/documents.routes.js';
 import { reportingRouter } from './modules/reporting/reporting.routes.js';
 import { skillsRouter } from './modules/skills/skills.routes.js';
+import { jobPostsRouter } from './modules/job-posts/job-posts.routes.js';
+import { createPublicJobsRouter } from './modules/public-jobs/public-jobs.routes.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -39,7 +41,12 @@ export function buildApp(): Express {
   // Request logging.
   app.use(pinoHttp({ logger }));
 
-  // Rate limit all /api traffic.
+  // PUBLIC portal — mounted BEFORE the global limiter + all auth'd routes. It is
+  // an isolated, unauthenticated blast radius with its OWN stricter limiters.
+  // (trust proxy stays default for dev-direct; revisit per deployment topology.)
+  app.use('/api/public', createPublicJobsRouter());
+
+  // Rate limit all remaining /api traffic (does not double-cover /api/public).
   const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 300,
@@ -60,6 +67,7 @@ export function buildApp(): Express {
   app.use('/api/documents', documentsRouter);
   app.use('/api/reports', reportingRouter);
   app.use('/api/skills', skillsRouter);
+  app.use('/api/job-posts', jobPostsRouter);
 
   // Unknown route -> 404 (handled by central error handler).
   app.use('/api', (_req, _res, next) => {

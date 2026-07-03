@@ -41,6 +41,6 @@ export interface DocumentMeta {
   filename: string;
   mimeType: string;
   sizeBytes: number;
-  uploadedById: string;
+  uploadedById: string | null;
   createdAt: string;
 }

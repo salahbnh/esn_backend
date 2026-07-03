@@ -76,6 +76,7 @@ enum DocumentType {
   CONTRACT_AMENDMENT
   PROPOSAL
   MISSION_DOC
+  COVER_LETTER
   OTHER
 }
 
@@ -87,6 +88,54 @@ enum EntityType {
   CONTRACT
   CONTRACT_TEMPLATE
   ASSIGNMENT
+  JOB_POST
+  APPLICATION
+}
+
+// --- Job Offers + public application portal --------------------------------
+
+enum JobPostStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  LINKED
+  REJECTED
+  SPAM
+}
+
+enum QuestionType {
+  SHORT_TEXT
+  LONG_TEXT
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  BOOLEAN
+  NUMBER
+}
+
+enum EmploymentType {
+  CDI
+  CDD
+  STAGE
+  FREELANCE
+}
+
+enum SeniorityLevel {
+  JUNIOR
+  CONFIRMED
+  SENIOR
+  LEAD
+}
+
+/// AV quarantine stub — CLEAN/INFECTED set by a future antivirus worker.
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +164,8 @@ model User {
   contractAmendments    ContractAmendment[]    @relation("ContractAmendmentAuthor")
   contractValidations   ContractValidation[]   @relation("ContractValidator")
   uploadedDocuments     Document[]             @relation("DocumentUploader")
+  jobPostsAuthored      JobPost[]              @relation("JobPostAuthor")
+  reviewedApplications  Application[]          @relation("ApplicationReviewer")
   notifications         Notification[]
 
   @@index([role])
@@ -136,6 +187,7 @@ model Skill {
   candidates  Candidate[]
   consultants Consultant[]
   missions    Mission[]
+  jobPosts    JobPost[]
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +204,7 @@ model Candidate {
   source         String?
   targetPosition String?
   notes          String?
+  jobPostId      String? // origin job post if created via the public portal (null = RH-created)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 
@@ -159,6 +212,7 @@ model Candidate {
   interactions CandidateInteraction[]
   evaluations  CandidateEvaluation[]
   proposals    Proposal[]
+  applications Application[]
 
   // Set when the candidate is HIRED and converted to a Consultant
   consultant Consultant?
@@ -431,12 +485,13 @@ model Document {
   mimeType     String
   sizeBytes    Int
   storageKey   String       @unique
-  uploadedById String
+  uploadedById String? // null for public (anonymous) application uploads
+  scanStatus   ScanStatus   @default(PENDING) // AV quarantine stub
   archivedAt   DateTime? // soft-delete marker; MinIO object is retained
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
-  uploadedBy User @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  uploadedBy User? @relation("DocumentUploader", fields: [uploadedById], references: [id])
 
   @@index([entityType, entityId])
   @@index([uploadedById])
@@ -472,4 +527,89 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
+}
+
+// ---------------------------------------------------------------------------
+// Job Offers + public application portal
+// ---------------------------------------------------------------------------
+
+/// Offre d'emploi — public via an unguessable token when PUBLISHED.
+model JobPost {
+  id                 String         @id @default(cuid())
+  title              String
+  description        String
+  requirements       String?
+  location           String?
+  employmentType     EmploymentType
+  seniorityLevel     SeniorityLevel?
+  minYearsExperience Int?
+  status             JobPostStatus  @default(DRAFT)
+  publicToken        String         @unique // 128-bit CSPRNG (not the cuid PK)
+  publishedAt        DateTime?
+  expiresAt          DateTime?
+  archivedAt         DateTime?
+  authorId           String
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  author         User          @relation("JobPostAuthor", fields: [authorId], references: [id])
+  requiredSkills Skill[] // implicit m2m (_JobPostToSkill)
+  questions      JobQuestion[]
+  applications   Application[]
+
+  @@index([status])
+  @@index([authorId])
+}
+
+/// Per-post custom question. Editable/reorderable/soft-deletable even after
+/// applications exist — answers are frozen snapshots on Application.
+model JobQuestion {
+  id         String       @id @default(cuid())
+  jobPostId  String
+  key        String // stable machine key, unique per post
+  label      String
+  type       QuestionType
+  required   Boolean      @default(false)
+  options    Json? // choice types: string[]
+  config     Json? // { min?, max?, maxLength? }
+  order      Int
+  helpText   String?
+  archivedAt DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  jobPost JobPost @relation(fields: [jobPostId], references: [id], onDelete: Cascade)
+
+  @@unique([jobPostId, key])
+  @@index([jobPostId])
+}
+
+/// Candidature reçue via le portail public. Decoupled from Candidate: RH "links"
+/// it into the ATS later (creates/attaches a Candidate). `answers` is immutable.
+model Application {
+  id                String            @id @default(cuid())
+  jobPostId         String
+  firstName         String
+  lastName          String
+  email             String
+  phone             String?
+  consentAcceptedAt DateTime
+  jobTitleSnapshot  String
+  answers           Json // immutable: [{ key, label, type, value }]
+  declaredSkills    Json? // snapshot: [{ name }]
+  status            ApplicationStatus @default(SUBMITTED)
+  candidateId       String?
+  reviewedById      String?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  jobPost    JobPost    @relation(fields: [jobPostId], references: [id])
+  candidate  Candidate? @relation(fields: [candidateId], references: [id])
+  reviewedBy User?      @relation("ApplicationReviewer", fields: [reviewedById], references: [id])
+
+  @@index([jobPostId, status])
+  @@index([email])
+  @@index([candidateId])
 }
