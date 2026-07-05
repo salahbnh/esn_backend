@@ -230,6 +230,22 @@ export async function activateUser(id: string): Promise<void> {
   }
 }
 
+/**
+ * Enable or disable a Keycloak account (staff deactivation/reactivation from the
+ * users admin). A disabled account cannot log in; the DB `User.isActive` flag is
+ * kept in sync by the caller.
+ */
+export async function setUserEnabled(id: string, enabled: boolean): Promise<void> {
+  const res = await adminFetch(`/users/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    logger.error({ status: res.status, keycloakId: id }, 'Keycloak enable/disable failed');
+    throw AppError.internal('Could not update the identity-provider account');
+  }
+}
+
 /** Delete a Keycloak user (used as a compensating action). */
 export async function deleteUser(id: string): Promise<void> {
   const res = await adminFetch(`/users/${id}`, { method: 'DELETE' });

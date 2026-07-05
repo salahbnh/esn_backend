@@ -15,6 +15,9 @@ export const CreateContractBodySchema = z
   .object({
     consultantId: z.string().cuid(),
     templateId: z.string().cuid().optional(),
+    // Designated approver of the MANAGER validation step (required — real ESN
+    // workflows route approval to the consultant's responsible manager).
+    managerId: z.string().cuid(),
     type: z.string().min(1),
     startDate: z.string().datetime().optional(),
     endDate: z.string().datetime().optional(),
@@ -26,6 +29,9 @@ export const CreateContractBodySchema = z
 export const UpdateContractBodySchema = z
   .object({
     type: z.string().min(1).optional(),
+    // Reassign the designated MANAGER-step approver (DRAFT only — the update
+    // route already enforces that). Escape hatch when a manager is deactivated.
+    managerId: z.string().cuid().optional(),
     startDate: z.string().datetime().optional(),
     endDate: z.string().datetime().optional(),
     // RH-entered manual placeholder values (placeholder name -> value).

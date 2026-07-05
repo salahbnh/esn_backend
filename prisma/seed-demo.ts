@@ -173,24 +173,65 @@ async function main(): Promise<void> {
   }
 
   // --- A couple of contracts across statuses (HR report) ---
+  // Contracts past DRAFT also get their ContractValidation circuit rows, exactly
+  // as a real `PATCH /:id/submit` would have created them — otherwise the
+  // "Circuit de validation" timeline (rightly) reports no circuit.
   const contracts = [
     { id: 'demo-ctr-1', cons: 'sara', type: 'CDI', status: 'SIGNED' as const },
     { id: 'demo-ctr-2', cons: 'tom', type: 'CDI', status: 'INTERNAL_VALIDATION' as const },
     { id: 'demo-ctr-3', cons: 'karim', type: 'CDD', status: 'DRAFT' as const },
   ];
+  const rhUser = await prisma.user.findUnique({ where: { email: 'rh@esn.local' } });
+  const mgrUser = await prisma.user.findUnique({ where: { email: 'manager@esn.local' } });
+  const dirUser = await prisma.user.findUnique({ where: { email: 'direction@esn.local' } });
   for (const c of contracts) {
     const id = demoId(c.id);
+    // SIGNED demo contract carries realistic two-party signature stamps.
+    const signedStamps =
+      c.status === 'SIGNED'
+        ? {
+            consultantSignedAt: daysFromNow(-12),
+            consultantSignatoryName: 'Sara Benali',
+            companySignedAt: daysFromNow(-10),
+            companySignatoryName: 'Rachida Haddaoui',
+          }
+        : {};
     await prisma.contract.upsert({
       where: { id },
-      update: { status: c.status },
+      update: { status: c.status, managerId: mgrUser?.id ?? null, ...signedStamps },
       create: {
         id,
         consultantId: consultantIds[c.cons]!,
         type: c.type,
         status: c.status,
+        managerId: mgrUser?.id ?? null,
         prefilledData: { fields: {}, renderedBody: '', unfilled: [] },
+        ...signedStamps,
       },
     });
+
+    // Validation circuit rows (idempotent: wipe + recreate for this contract).
+    await prisma.contractValidation.deleteMany({ where: { contractId: id } });
+    if (c.status === 'SIGNED') {
+      // Fully approved circuit.
+      await prisma.contractValidation.createMany({
+        data: [
+          { contractId: id, step: 'RH', state: 'APPROVED', validatorId: rhUser?.id ?? null, decidedAt: daysFromNow(-16), comment: 'Dossier complet.' },
+          { contractId: id, step: 'MANAGER', state: 'APPROVED', validatorId: mgrUser?.id ?? null, decidedAt: daysFromNow(-15) },
+          { contractId: id, step: 'DIRECTION', state: 'APPROVED', validatorId: dirUser?.id ?? null, decidedAt: daysFromNow(-14) },
+        ],
+      });
+    } else if (c.status === 'INTERNAL_VALIDATION') {
+      // Mid-circuit: RH approved, MANAGER pending, DIRECTION untouched.
+      await prisma.contractValidation.createMany({
+        data: [
+          { contractId: id, step: 'RH', state: 'APPROVED', validatorId: rhUser?.id ?? null, decidedAt: daysFromNow(-2), comment: 'OK côté RH.' },
+          { contractId: id, step: 'MANAGER', state: 'PENDING' },
+          { contractId: id, step: 'DIRECTION', state: 'PENDING' },
+        ],
+      });
+    }
+    // DRAFT: no rows — the circuit genuinely has not started.
   }
 
   // --- Link the seeded LOGIN consultant (consultant@esn.local) to a profile +

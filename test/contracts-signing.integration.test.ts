@@ -63,9 +63,12 @@ async function seedConsultant(token: string) {
   return { user, consultant };
 }
 
+let seededManagerId = '';
+
 async function seedContext() {
   await seedUser('RH', 'RH');
-  await seedUser('MANAGER', 'MANAGER');
+  const mgr = await seedUser('MANAGER', 'MANAGER');
+  seededManagerId = mgr.id;
   await seedUser('DIRECTION', 'DIRECTION');
   const { consultant: a } = await seedConsultant('CONSULTANT_A');
   const { consultant: b } = await seedConsultant('CONSULTANT_B');
@@ -83,7 +86,7 @@ const createContract = (consultantId: string, templateId: string) =>
   request(app)
     .post('/api/contracts')
     .set('Authorization', as('RH'))
-    .send({ consultantId, templateId, type: 'CDI', startDate: new Date('2026-07-01').toISOString() });
+    .send({ consultantId, templateId, managerId: seededManagerId, type: 'CDI', startDate: new Date('2026-07-01').toISOString() });
 const submit = (id: string) => request(app).patch(`/api/contracts/${id}/submit`).set('Authorization', as('RH'));
 const validate = (token: string, id: string) =>
   request(app).patch(`/api/contracts/${id}/validate`).set('Authorization', as(token)).send({ decision: 'APPROVED' });

@@ -71,6 +71,8 @@ function validation(
 beforeEach(() => {
   vi.clearAllMocks();
   mockRepo.writeAuditLog.mockResolvedValue(undefined);
+  // Designated manager is valid by default; tests override to exercise the guard.
+  mockRepo.findActiveManager.mockResolvedValue({ id: 'mgr1' } as never);
 });
 
 // ---------------------------------------------------------------------------
@@ -92,7 +94,7 @@ describe('createContract', () => {
     mockRepo.createContract.mockResolvedValue(contract() as unknown as ContractDetail);
 
     await service.createContract(
-      { consultantId: 'con1', templateId: 'tmpl1', type: 'CDI' },
+      { consultantId: 'con1', templateId: 'tmpl1', type: 'CDI', managerId: 'mgr1' },
       'actor1',
     );
 
@@ -107,7 +109,7 @@ describe('createContract', () => {
   it('throws 404 when the consultant does not exist', async () => {
     mockRepo.findConsultantForPrefill.mockResolvedValue(null);
     await expect(
-      service.createContract({ consultantId: 'nope', type: 'CDI' }, 'actor1'),
+      service.createContract({ consultantId: 'nope', type: 'CDI', managerId: 'mgr1' }, 'actor1'),
     ).rejects.toMatchObject({ statusCode: 404 });
   });
 
@@ -125,7 +127,7 @@ describe('createContract', () => {
     mockRepo.createContract.mockResolvedValue(contract() as unknown as ContractDetail);
 
     await service.createContract(
-      { consultantId: 'con1', templateId: 'tmpl1', type: 'CDI', fields: { salary: '60000' } },
+      { consultantId: 'con1', templateId: 'tmpl1', type: 'CDI', managerId: 'mgr1', fields: { salary: '60000' } },
       'actor1',
     );
 
@@ -214,6 +216,27 @@ describe('processValidationStep', () => {
       'MANAGER-id',
       undefined,
     );
+  });
+
+  it('a non-designated manager gets 403 NOT_DESIGNATED_MANAGER', async () => {
+    setup({ RH: 'APPROVED', MANAGER: 'PENDING', DIRECTION: 'PENDING' });
+    mockRepo.findContractById.mockResolvedValue(
+      contract({ status: 'INTERNAL_VALIDATION', managerId: 'the-right-manager' } as never),
+    );
+    await expect(act('MANAGER')).rejects.toMatchObject({
+      statusCode: 403,
+      details: { code: 'NOT_DESIGNATED_MANAGER' },
+    });
+    expect(mockRepo.processValidationStep).not.toHaveBeenCalled();
+  });
+
+  it('the designated manager can approve their step', async () => {
+    setup({ RH: 'APPROVED', MANAGER: 'PENDING', DIRECTION: 'PENDING' });
+    mockRepo.findContractById.mockResolvedValue(
+      contract({ status: 'INTERNAL_VALIDATION', managerId: 'MANAGER-id' } as never),
+    );
+    await act('MANAGER');
+    expect(mockRepo.processValidationStep).toHaveBeenCalled();
   });
 
   it('DIRECTION approves last step -> PENDING_SIGNATURE (propagated)', async () => {

@@ -35,6 +35,7 @@ export interface ContractFilter {
 export interface CreateContractData {
   consultantId: string;
   templateId?: string;
+  managerId?: string;
   type: string;
   startDate?: Date;
   endDate?: Date;
@@ -43,6 +44,7 @@ export interface CreateContractData {
 
 export interface UpdateContractData {
   type?: string;
+  managerId?: string;
   startDate?: Date;
   endDate?: Date;
   prefilledData?: Prisma.InputJsonValue;
@@ -75,6 +77,7 @@ const CONSULTANT_DETAIL_INCLUDE = {
       user: { select: { id: true, firstName: true, lastName: true } },
     },
   },
+  manager: { select: { id: true, firstName: true, lastName: true } },
 } as const;
 
 function paginate({ page, pageSize }: Pagination): { skip: number; take: number } {
@@ -220,11 +223,20 @@ export async function listContracts(filter: ContractFilter, pagination: Paginati
 // Simple mutations
 // ---------------------------------------------------------------------------
 
+/** Validate a designated manager: must exist, be MANAGER, and be active. */
+export function findActiveManager(userId: string) {
+  return prisma.user.findFirst({
+    where: { id: userId, role: 'MANAGER', isActive: true },
+    select: { id: true },
+  });
+}
+
 export function createContract(data: CreateContractData) {
   return prisma.contract.create({
     data: {
       consultantId: data.consultantId,
       ...(data.templateId !== undefined ? { templateId: data.templateId } : {}),
+      ...(data.managerId !== undefined ? { managerId: data.managerId } : {}),
       type: data.type,
       ...(data.startDate !== undefined ? { startDate: data.startDate } : {}),
       ...(data.endDate !== undefined ? { endDate: data.endDate } : {}),
@@ -239,6 +251,7 @@ export function updateContract(id: string, data: UpdateContractData) {
     where: { id },
     data: {
       ...(data.type !== undefined ? { type: data.type } : {}),
+      ...(data.managerId !== undefined ? { managerId: data.managerId } : {}),
       ...(data.startDate !== undefined ? { startDate: data.startDate } : {}),
       ...(data.endDate !== undefined ? { endDate: data.endDate } : {}),
       ...(data.prefilledData !== undefined ? { prefilledData: data.prefilledData } : {}),

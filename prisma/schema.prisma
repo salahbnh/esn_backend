@@ -91,6 +91,7 @@ enum EntityType {
   JOB_POST
   APPLICATION
   SKILL
+  USER
 }
 
 // --- Job Offers + public application portal --------------------------------
@@ -167,6 +168,7 @@ model User {
   uploadedDocuments     Document[]             @relation("DocumentUploader")
   jobPostsAuthored      JobPost[]              @relation("JobPostAuthor")
   reviewedApplications  Application[]          @relation("ApplicationReviewer")
+  managedContracts      Contract[]             @relation("ContractManager")
 
   @@index([role])
 }
@@ -406,6 +408,7 @@ model Contract {
   type           String // CDI / CDD / etc.
   status         ContractStatus @default(DRAFT)
   prefilledData  Json // auto-filled from Consultant
+  managerId      String? // designated approver of the MANAGER step (null = legacy, any manager)
   generatedPdfId String? // generated PDF
   signedPdfId    String? // optional uploaded wet-signed scan (document attachment)
   startDate      DateTime?
@@ -422,12 +425,14 @@ model Contract {
 
   consultant  Consultant           @relation(fields: [consultantId], references: [id])
   template    ContractTemplate?    @relation(fields: [templateId], references: [id])
+  manager     User?                @relation("ContractManager", fields: [managerId], references: [id])
   validations ContractValidation[]
   amendments  ContractAmendment[]
 
   @@index([consultantId])
   @@index([templateId])
   @@index([status])
+  @@index([managerId])
 }
 
 /// workflow RH -> Manager -> Direction

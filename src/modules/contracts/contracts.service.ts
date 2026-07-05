@@ -140,6 +140,14 @@ async function computePrefill(args: {
 }
 
 export async function createContract(body: CreateContractBody, actorId: string) {
+  // The designated MANAGER-step approver must be a real, active manager.
+  const manager = await repo.findActiveManager(body.managerId);
+  if (!manager) {
+    throw AppError.badRequest('The designated manager must be an active MANAGER user', {
+      code: 'INVALID_MANAGER',
+    });
+  }
+
   const prefill = await computePrefill({
     consultantId: body.consultantId,
     ...(body.templateId !== undefined ? { templateId: body.templateId } : {}),
@@ -155,6 +163,7 @@ export async function createContract(body: CreateContractBody, actorId: string) 
   const contract = await repo.createContract({
     consultantId: body.consultantId,
     ...(body.templateId !== undefined ? { templateId: body.templateId } : {}),
+    managerId: body.managerId,
     type: body.type,
     ...(body.startDate !== undefined ? { startDate: new Date(body.startDate) } : {}),
     ...(body.endDate !== undefined ? { endDate: new Date(body.endDate) } : {}),
@@ -184,6 +193,16 @@ export async function updateContract(
     });
   }
 
+  // Reassigning the designated manager (escape hatch when one is deactivated).
+  if (body.managerId !== undefined) {
+    const manager = await repo.findActiveManager(body.managerId);
+    if (!manager) {
+      throw AppError.badRequest('The designated manager must be an active MANAGER user', {
+        code: 'INVALID_MANAGER',
+      });
+    }
+  }
+
   // Re-render the prefill from the effective (merged) field values so the stored
   // snapshot + unfilled list stay in sync after an edit. AUTO values are derived
   // from the consultant; RH `fields` provide the manual ones.
@@ -201,6 +220,7 @@ export async function updateContract(
 
   const updated = await repo.updateContract(id, {
     ...(body.type !== undefined ? { type: body.type } : {}),
+    ...(body.managerId !== undefined ? { managerId: body.managerId } : {}),
     ...(body.startDate !== undefined ? { startDate: new Date(body.startDate) } : {}),
     ...(body.endDate !== undefined ? { endDate: new Date(body.endDate) } : {}),
     prefilledData: prefill as unknown as Prisma.InputJsonValue,
@@ -271,6 +291,14 @@ export async function processValidationStep(
 
   if (actorRole !== STEP_ROLE_MAP[pendingStep]) {
     throw AppError.forbidden('Not the approver for the current validation step');
+  }
+
+  // The MANAGER step is routed to the contract's DESIGNATED manager (real-ESN
+  // approval routing). Legacy contracts without one accept any manager.
+  if (pendingStep === 'MANAGER' && contract.managerId && actorId !== contract.managerId) {
+    throw AppError.forbidden('This contract is awaiting its designated manager', {
+      code: 'NOT_DESIGNATED_MANAGER',
+    });
   }
 
   // TODO(notifications): notify the next approver (or the creator on rejection).

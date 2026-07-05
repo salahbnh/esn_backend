@@ -59,7 +59,7 @@ async function resetDb(): Promise<void> {
 
 async function seedUser(token: string, role: 'RH' | 'MANAGER' | 'DIRECTION' | 'CONSULTANT') {
   const upper = token.toUpperCase();
-  return prisma.user.create({
+  const user = await prisma.user.create({
     data: {
       keycloakId: `kc-${upper}`,
       email: `${upper.toLowerCase()}@internal.test`,
@@ -68,6 +68,8 @@ async function seedUser(token: string, role: 'RH' | 'MANAGER' | 'DIRECTION' | 'C
       role,
     },
   });
+  if (role === 'MANAGER') seededManagerId = user.id; // contracts need a designated manager
+  return user;
 }
 
 async function seedConsultant(token: string) {
@@ -100,6 +102,8 @@ async function seedTemplateWithManual() {
 }
 
 /** Seeds RH/MANAGER/DIRECTION actors + a consultant + a template. */
+let seededManagerId = '';
+
 async function seedActorsAndContext() {
   await seedUser('RH', 'RH');
   await seedUser('MANAGER', 'MANAGER');
@@ -113,6 +117,7 @@ function createPayload(consultantId: string, templateId?: string) {
   return {
     consultantId,
     ...(templateId ? { templateId } : {}),
+    managerId: seededManagerId,
     type: 'CDI',
     startDate: new Date('2026-07-01').toISOString(),
   };
@@ -386,6 +391,7 @@ describe('reject path', () => {
 describe('GET /api/contracts/:id — CONSULTANT ownership', () => {
   it('own contract -> 200; other consultant -> 403', async () => {
     await seedUser('RH', 'RH');
+    await seedUser('MANAGER', 'MANAGER');
     const { consultant: conA } = await seedConsultant('CONSULTANT_A');
     await seedConsultant('CONSULTANT_B');
     const template = await seedTemplate();
@@ -511,7 +517,7 @@ describe('POST /api/contracts/:id/generate-pdf', () => {
     const created = await request(app)
       .post('/api/contracts')
       .set('Authorization', as('RH'))
-      .send({ consultantId, templateId, type: 'CDI', fields });
+      .send({ consultantId, templateId, managerId: seededManagerId, type: 'CDI', fields });
     const id = created.body.id as string;
     await submit('RH', id);
     await validate('RH', id);

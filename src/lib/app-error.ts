@@ -24,8 +24,8 @@ export class AppError extends Error {
     return new AppError(401, 'UNAUTHORIZED', message);
   }
 
-  static forbidden(message = 'Forbidden'): AppError {
-    return new AppError(403, 'FORBIDDEN', message);
+  static forbidden(message = 'Forbidden', details?: unknown): AppError {
+    return new AppError(403, 'FORBIDDEN', message, details);
   }
 
   static notFound(message = 'Not found'): AppError {

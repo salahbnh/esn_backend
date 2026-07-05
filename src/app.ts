@@ -20,6 +20,7 @@ import { reportingRouter } from './modules/reporting/reporting.routes.js';
 import { skillsRouter } from './modules/skills/skills.routes.js';
 import { jobPostsRouter } from './modules/job-posts/job-posts.routes.js';
 import { createPublicJobsRouter } from './modules/public-jobs/public-jobs.routes.js';
+import { usersRouter } from './modules/users/users.routes.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -68,6 +69,7 @@ export function buildApp(): Express {
   app.use('/api/reports', reportingRouter);
   app.use('/api/skills', skillsRouter);
   app.use('/api/job-posts', jobPostsRouter);
+  app.use('/api/users', usersRouter);
 
   // Unknown route -> 404 (handled by central error handler).
   app.use('/api', (_req, _res, next) => {

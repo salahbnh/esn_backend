@@ -38,6 +38,7 @@ const UPLOAD_MATRIX: Record<EntityType, Role[]> = {
   // bypasses this auth matrix entirely; the entry exists so the Record is total.
   APPLICATION: [],
   SKILL: [], // skills carry no documents; entry exists so the Record is total
+  USER: [], // user accounts carry no documents
 };
 
 // DocumentTypes a CONSULTANT may upload to their own CONSULTANT entity.
@@ -56,6 +57,7 @@ const DOWNLOAD_MATRIX: Record<EntityType, Role[]> = {
   JOB_POST: ['RH', 'DIRECTION'],
   APPLICATION: ['RH', 'MANAGER', 'DIRECTION'],
   SKILL: [],
+  USER: [],
 };
 
 /**
