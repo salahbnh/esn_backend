@@ -169,6 +169,7 @@ model User {
   jobPostsAuthored      JobPost[]              @relation("JobPostAuthor")
   reviewedApplications  Application[]          @relation("ApplicationReviewer")
   managedContracts      Contract[]             @relation("ContractManager")
+  aiEvaluationsCreated  AiEvaluation[]         @relation("AiEvaluationCreator")
 
   @@index([role])
 }
@@ -597,7 +598,47 @@ model Application {
   candidate  Candidate? @relation(fields: [candidateId], references: [id])
   reviewedBy User?      @relation("ApplicationReviewer", fields: [reviewedById], references: [id])
 
+  aiEvaluations AiEvaluation[]
+
   @@index([jobPostId, status])
   @@index([email])
   @@index([candidateId])
+}
+
+// ---------------------------------------------------------------------------
+// AI evaluation (Claude) — application-vs-job-post matching
+// ---------------------------------------------------------------------------
+
+enum AiVerdict {
+  STRONG_MATCH
+  GOOD_MATCH
+  PARTIAL_MATCH
+  WEAK_MATCH
+}
+
+/// One row per AI evaluation run of an Application against its JobPost.
+/// History is kept (re-evaluations append). Result fields come from a
+/// structured-output LLM call, range-validated server-side before persist.
+model AiEvaluation {
+  id            String    @id @default(cuid())
+  applicationId String
+  score         Int // 0-100 (Zod-validated post-parse)
+  verdict       AiVerdict
+  strengths     Json // string[]
+  gaps          Json // string[]
+  reasoning     String    @db.Text
+  cvUsed        Boolean   @default(false) // PDF CV fetched & sent to the model
+  model         String // e.g. "claude-haiku-4-5"
+  promptVersion String // e.g. "v1" — reproducibility across prompt iterations
+  tokensInput   Int? // cost tracking
+  tokensOutput  Int?
+  createdById   String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  createdBy   User        @relation("AiEvaluationCreator", fields: [createdById], references: [id])
+
+  @@index([applicationId])
+  @@index([createdById])
 }

@@ -10,7 +10,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     container_name: esn-postgres
     restart: unless-stopped
     environment:
@@ -21,6 +21,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # Creates the extra `keycloak` database on first initialisation only.
+      - ./keycloak/init-keycloak-db.sql:/docker-entrypoint-initdb.d/10-keycloak-db.sql:ro
     networks:
       - esn-net
     healthcheck:
@@ -31,7 +33,7 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: esn-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -54,7 +56,7 @@ services:
   # One-shot: waits for MinIO to be healthy, then creates the documents bucket.
   # Exits 0 once done; safe to re-run (mb --ignore-existing is idempotent).
   minio-setup:
-    image: minio/mc
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: esn-minio-setup
     depends_on:
       minio:
@@ -72,7 +74,7 @@ services:
   # mail at http://localhost:8025. Catches all mail regardless of domain, so the
   # invite to prenom.nom@esn.local (a fake internal domain) is readable locally.
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.31.1
     container_name: esn-mailpit
     restart: unless-stopped
     ports:
@@ -87,10 +89,11 @@ services:
       retries: 10
 
   keycloak:
-    image: quay.io/keycloak/keycloak:latest
+    image: quay.io/keycloak/keycloak:26.7.3
     container_name: esn-keycloak
     restart: unless-stopped
-    # start-dev runs an in-memory/H2 dev server; --import-realm loads /opt/keycloak/data/import/*.json
+    # start-dev = dev mode (no HTTPS / relaxed hostname checks). State lives in
+    # Postgres, not H2; --import-realm loads /opt/keycloak/data/import/*.json once.
     command: start-dev --import-realm
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
@@ -98,11 +101,19 @@ services:
       # Backwards-compatible aliases for older image tags.
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      # Persist realms/users in Postgres (see keycloak/init-keycloak-db.sql).
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: esn
+      KC_DB_PASSWORD: esn
     ports:
       - "8080:8080"
     volumes:
       # Realm "esn" (clients, roles, dev users) imported on first boot.
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - esn-net
     healthcheck:

@@ -50,6 +50,19 @@ export async function getPresignedGetUrl(key: string, expiresSec = 300): Promise
   });
 }
 
+/**
+ * Fetch an object's raw bytes server-side (e.g. a CV PDF forwarded to the AI
+ * evaluation service). Authorization MUST be checked by the caller — this is
+ * a low-level accessor and the storage key must never reach the client.
+ */
+export async function getObjectBytes(key: string): Promise<Buffer> {
+  const result = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  if (!result.Body) {
+    throw new Error(`Empty object body for storage key`);
+  }
+  return Buffer.from(await result.Body.transformToByteArray());
+}
+
 export async function deleteObject(key: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }

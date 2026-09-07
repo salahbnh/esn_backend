@@ -40,6 +40,14 @@ async function purgeLegacyDemoRows(): Promise<void> {
 async function main(): Promise<void> {
   await purgeLegacyDemoRows();
 
+  // Skills referential (seeded by prisma/seed.ts) → connect helper by name.
+  const allSkills = await prisma.skill.findMany({ select: { id: true, name: true } });
+  const connectSkillsByName = (names: string[]) =>
+    names
+      .map((n) => allSkills.find((sk) => sk.name === n)?.id)
+      .filter((id): id is string => Boolean(id))
+      .map((id) => ({ id }));
+
   // --- Clients ---
   const clients = [
     { id: 'demo-client-bnp', name: 'BNP Paribas', industry: 'Banque' },
@@ -57,13 +65,13 @@ async function main(): Promise<void> {
 
   // --- Consultants (each needs a User). Statuses spread for occupancy/HR KPIs. ---
   const consultantSpec = [
-    { key: 'sara', first: 'Sara', last: 'Benali', position: 'Dev Full-Stack', tjm: '650.00', status: 'ON_MISSION' as const },
-    { key: 'karim', first: 'Karim', last: 'Haddad', position: 'Data Engineer', tjm: '700.00', status: 'ON_MISSION' as const },
-    { key: 'lea', first: 'Léa', last: 'Moreau', position: 'DevOps', tjm: '720.00', status: 'ON_MISSION' as const },
-    { key: 'tom', first: 'Tom', last: 'Girard', position: 'Dev Backend', tjm: '600.00', status: 'INTERCONTRAT' as const },
-    { key: 'nina', first: 'Nina', last: 'Lopez', position: 'UX Designer', tjm: '580.00', status: 'INTERCONTRAT' as const },
-    { key: 'omar', first: 'Omar', last: 'Cherif', position: 'Architecte', tjm: '850.00', status: 'AVAILABLE' as const },
-    { key: 'eva', first: 'Eva', last: 'Petit', position: 'QA Engineer', tjm: '560.00', status: 'AVAILABLE' as const },
+    { key: 'sara', first: 'Sara', last: 'Benali', position: 'Dev Full-Stack', tjm: '650.00', status: 'ON_MISSION' as const, skills: ['React', 'Node.js', 'TypeScript'] },
+    { key: 'karim', first: 'Karim', last: 'Haddad', position: 'Data Engineer', tjm: '700.00', status: 'ON_MISSION' as const, skills: ['PostgreSQL', 'Node.js'] },
+    { key: 'lea', first: 'Léa', last: 'Moreau', position: 'DevOps', tjm: '720.00', status: 'ON_MISSION' as const, skills: ['AWS', 'Node.js'] },
+    { key: 'tom', first: 'Tom', last: 'Girard', position: 'Dev Backend', tjm: '600.00', status: 'INTERCONTRAT' as const, skills: ['Node.js', 'PostgreSQL'] },
+    { key: 'nina', first: 'Nina', last: 'Lopez', position: 'UX Designer', tjm: '580.00', status: 'INTERCONTRAT' as const, skills: ['React'] },
+    { key: 'omar', first: 'Omar', last: 'Cherif', position: 'Architecte', tjm: '850.00', status: 'AVAILABLE' as const, skills: ['React', 'Node.js', 'TypeScript', 'AWS'] },
+    { key: 'eva', first: 'Eva', last: 'Petit', position: 'QA Engineer', tjm: '560.00', status: 'AVAILABLE' as const, skills: ['TypeScript', 'React'] },
   ];
   const consultantIds: Record<string, string> = {};
   for (const c of consultantSpec) {
@@ -83,7 +91,10 @@ async function main(): Promise<void> {
     });
     await prisma.consultant.upsert({
       where: { id: consultantId },
-      update: { status: c.status, tjm: c.tjm, position: c.position },
+      update: {
+        status: c.status, tjm: c.tjm, position: c.position,
+        skills: { set: connectSkillsByName(c.skills) },
+      },
       create: {
         id: consultantId,
         userId,
@@ -91,6 +102,7 @@ async function main(): Promise<void> {
         tjm: c.tjm,
         status: c.status,
         hireDate: daysFromNow(-200),
+        skills: { connect: connectSkillsByName(c.skills) },
       },
     });
     consultantIds[c.key] = consultantId;
@@ -125,18 +137,18 @@ async function main(): Promise<void> {
 
   // --- Missions across statuses (CLOSED ones carry end dates → avg duration) ---
   const missions = [
-    { id: 'demo-mis-1', clientId: 'demo-client-bnp', project: 'Plateforme paiements', role: 'Dev Full-Stack', tjm: '650.00', status: 'IN_PROGRESS' as const, start: -60, end: null },
-    { id: 'demo-mis-2', clientId: 'demo-client-airbus', project: 'Pipeline données', role: 'Data Engineer', tjm: '700.00', status: 'IN_PROGRESS' as const, start: -30, end: null },
-    { id: 'demo-mis-3', clientId: 'demo-client-edf', project: 'Migration cloud', role: 'DevOps', tjm: '720.00', status: 'STAFFED' as const, start: 10, end: null },
-    { id: 'demo-mis-4', clientId: 'demo-client-bnp', project: 'Refonte mobile', role: 'Dev Mobile', tjm: '640.00', status: 'DRAFT' as const, start: 30, end: null },
-    { id: 'demo-mis-5', clientId: 'demo-client-airbus', project: 'Audit sécurité', role: 'Sécurité', tjm: '800.00', status: 'CLOSED' as const, start: -180, end: -90 },
-    { id: 'demo-mis-6', clientId: 'demo-client-edf', project: 'Portail RH', role: 'Dev Full-Stack', tjm: '620.00', status: 'CLOSED' as const, start: -240, end: -120 },
+    { id: 'demo-mis-1', clientId: 'demo-client-bnp', project: 'Plateforme paiements', role: 'Dev Full-Stack', tjm: '650.00', status: 'IN_PROGRESS' as const, start: -60, end: null, skills: ['React', 'Node.js'] },
+    { id: 'demo-mis-2', clientId: 'demo-client-airbus', project: 'Pipeline données', role: 'Data Engineer', tjm: '700.00', status: 'IN_PROGRESS' as const, start: -30, end: null, skills: ['PostgreSQL', 'Node.js'] },
+    { id: 'demo-mis-3', clientId: 'demo-client-edf', project: 'Migration cloud', role: 'DevOps', tjm: '720.00', status: 'STAFFED' as const, start: 10, end: null, skills: ['AWS', 'Node.js'] },
+    { id: 'demo-mis-4', clientId: 'demo-client-bnp', project: 'Refonte mobile', role: 'Dev Full-Stack', tjm: '640.00', status: 'DRAFT' as const, start: 30, end: null, skills: ['React', 'TypeScript', 'Node.js'] },
+    { id: 'demo-mis-5', clientId: 'demo-client-airbus', project: 'Audit sécurité', role: 'Sécurité', tjm: '800.00', status: 'CLOSED' as const, start: -180, end: -90, skills: ['AWS'] },
+    { id: 'demo-mis-6', clientId: 'demo-client-edf', project: 'Portail RH', role: 'Dev Full-Stack', tjm: '620.00', status: 'CLOSED' as const, start: -240, end: -120, skills: ['React'] },
   ];
   for (const m of missions) {
     const id = demoId(m.id);
     await prisma.mission.upsert({
       where: { id },
-      update: { status: m.status },
+      update: { status: m.status, requiredSkills: { set: connectSkillsByName(m.skills) } },
       create: {
         id,
         clientId: demoId(m.clientId),
@@ -146,6 +158,7 @@ async function main(): Promise<void> {
         status: m.status,
         startDate: daysFromNow(m.start),
         endDate: m.end !== null ? daysFromNow(m.end) : null,
+        requiredSkills: { connect: connectSkillsByName(m.skills) },
       },
     });
   }
@@ -270,10 +283,177 @@ async function main(): Promise<void> {
     }
   }
 
+  // --- Job posts (offres d'emploi) + questions + applications ---
+  const rhAuthor = await prisma.user.findUnique({ where: { email: 'rh@esn.local' } });
+
+  const jobPostSpecs = [
+    {
+      id: 'demo-job-fullstack',
+      title: 'Développeur Full-Stack React / Node.js',
+      description:
+        "Au sein de nos équipes, vous concevez et développez des applications web modernes pour nos clients grands comptes, de la conception jusqu'à la mise en production. Vous participez aux choix techniques et à la revue de code.",
+      requirements:
+        "Maîtrise de React et de Node.js, bonnes pratiques de tests, autonomie et esprit d'équipe. Une expérience en TypeScript est un plus.",
+      location: 'Paris',
+      employmentType: 'CDI' as const,
+      seniorityLevel: 'CONFIRMED' as const,
+      minYearsExperience: 3,
+      status: 'PUBLISHED' as const,
+      publicToken: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
+      publishedDaysAgo: 12,
+      skills: ['React', 'Node.js', 'TypeScript'],
+    },
+    {
+      id: 'demo-job-devops',
+      title: 'Ingénieur DevOps / Cloud AWS',
+      description:
+        "Vous industrialisez le déploiement et l'exploitation de nos applications sur le cloud AWS : intégration continue, conteneurisation, supervision et sécurité.",
+      requirements: 'Solide expérience AWS, conteneurs et automatisation. Astreintes ponctuelles.',
+      location: 'Lyon',
+      employmentType: 'CDI' as const,
+      seniorityLevel: 'SENIOR' as const,
+      minYearsExperience: 5,
+      status: 'PUBLISHED' as const,
+      publicToken: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7',
+      publishedDaysAgo: 6,
+      skills: ['AWS', 'Node.js'],
+    },
+    {
+      id: 'demo-job-chefprojet',
+      title: 'Chef de projet technique',
+      description:
+        "Vous pilotez des projets de développement pour nos clients : cadrage, planification, coordination des équipes et suivi de la qualité.",
+      requirements: "Expérience confirmée en gestion de projet et culture technique solide.",
+      location: 'Paris',
+      employmentType: 'CDI' as const,
+      seniorityLevel: 'LEAD' as const,
+      minYearsExperience: 7,
+      status: 'PUBLISHED' as const,
+      publicToken: 'c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8',
+      publishedDaysAgo: 3,
+      skills: ['Project Management'],
+    },
+    {
+      id: 'demo-job-data',
+      title: 'Consultant Data / PostgreSQL',
+      description:
+        "Vous accompagnez nos clients sur leurs projets de données : modélisation, optimisation de bases PostgreSQL et valorisation de la donnée.",
+      requirements: 'Bonne maîtrise de SQL et de PostgreSQL.',
+      location: 'Nantes',
+      employmentType: 'CDI' as const,
+      seniorityLevel: 'CONFIRMED' as const,
+      minYearsExperience: 3,
+      status: 'DRAFT' as const,
+      publicToken: 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f809',
+      publishedDaysAgo: 0,
+      skills: ['PostgreSQL'],
+    },
+    {
+      id: 'demo-job-stage',
+      title: 'Stage Développement Web',
+      description:
+        "Stage de fin d'études au sein d'une équipe produit : participation au développement d'une application web sous la responsabilité d'un tuteur.",
+      requirements: 'Étudiant(e) en informatique, bases en développement web.',
+      location: 'Paris',
+      employmentType: 'STAGE' as const,
+      seniorityLevel: 'JUNIOR' as const,
+      minYearsExperience: 0,
+      status: 'CLOSED' as const,
+      publicToken: 'e5f6a7b8c9d0e1f2a3b4c5d6e7f80912',
+      publishedDaysAgo: 40,
+      skills: ['React'],
+    },
+  ];
+
+  if (rhAuthor) {
+    for (const jp of jobPostSpecs) {
+      const id = demoId(jp.id);
+      await prisma.jobPost.upsert({
+        where: { id },
+        update: { status: jp.status },
+        create: {
+          id,
+          title: jp.title,
+          description: jp.description,
+          requirements: jp.requirements,
+          location: jp.location,
+          employmentType: jp.employmentType,
+          seniorityLevel: jp.seniorityLevel,
+          minYearsExperience: jp.minYearsExperience,
+          status: jp.status,
+          publicToken: jp.publicToken,
+          publishedAt: jp.status === 'PUBLISHED' ? daysFromNow(-jp.publishedDaysAgo) : null,
+          authorId: rhAuthor.id,
+          requiredSkills: { connect: connectSkillsByName(jp.skills) },
+        },
+      });
+    }
+
+    // Questions on the flagship published post (drive the public form + answers).
+    const fullstackId = demoId('demo-job-fullstack');
+    const questions = [
+      { key: 'motivation', label: 'Pourquoi souhaitez-vous nous rejoindre ?', type: 'LONG_TEXT' as const, required: true, order: 0 },
+      { key: 'disponibilite', label: 'Quelle est votre disponibilité ?', type: 'SHORT_TEXT' as const, required: true, order: 1 },
+      { key: 'teletravail', label: 'Acceptez-vous le télétravail partiel ?', type: 'BOOLEAN' as const, required: false, order: 2 },
+    ];
+    for (const q of questions) {
+      await prisma.jobQuestion.upsert({
+        where: { jobPostId_key: { jobPostId: fullstackId, key: q.key } },
+        update: { label: q.label },
+        create: { id: demoId(`demo-jq-${q.key}`), jobPostId: fullstackId, ...q },
+      });
+    }
+
+    // A few applications on the flagship post.
+    const applications = [
+      {
+        id: 'demo-app-1', firstName: 'Karim', lastName: 'Benali', email: 'karim.benali@example.com',
+        phone: '0612345678', status: 'SUBMITTED' as const,
+        motivation: "Votre positionnement sur les projets grands comptes correspond exactement à ce que je recherche pour progresser.",
+        dispo: 'Sous un mois', teletravail: true, skills: ['React', 'Node.js'],
+      },
+      {
+        id: 'demo-app-2', firstName: 'Léa', lastName: 'Dubois', email: 'lea.dubois@example.com',
+        phone: '0623456789', status: 'UNDER_REVIEW' as const,
+        motivation: "Je souhaite rejoindre une équipe qui valorise la qualité du code et le travail collaboratif.",
+        dispo: 'Immédiate', teletravail: false, skills: ['React', 'TypeScript'],
+      },
+      {
+        id: 'demo-app-3', firstName: 'Marc', lastName: 'Petit', email: 'marc.petit@example.com',
+        phone: '0634567890', status: 'SUBMITTED' as const,
+        motivation: "Fort de plusieurs projets en Node.js, je veux relever de nouveaux défis techniques chez vous.",
+        dispo: 'Sous deux mois', teletravail: true, skills: ['Node.js', 'PostgreSQL'],
+      },
+    ];
+    for (const a of applications) {
+      await prisma.application.upsert({
+        where: { id: demoId(a.id) },
+        update: { status: a.status },
+        create: {
+          id: demoId(a.id),
+          jobPostId: fullstackId,
+          firstName: a.firstName,
+          lastName: a.lastName,
+          email: a.email,
+          phone: a.phone,
+          consentAcceptedAt: daysFromNow(-2),
+          jobTitleSnapshot: 'Développeur Full-Stack React / Node.js',
+          status: a.status,
+          answers: [
+            { key: 'motivation', label: 'Pourquoi souhaitez-vous nous rejoindre ?', type: 'LONG_TEXT', value: a.motivation },
+            { key: 'disponibilite', label: 'Quelle est votre disponibilité ?', type: 'SHORT_TEXT', value: a.dispo },
+            { key: 'teletravail', label: 'Acceptez-vous le télétravail partiel ?', type: 'BOOLEAN', value: a.teletravail },
+          ],
+          declaredSkills: a.skills.map((name) => ({ name })),
+        },
+      });
+    }
+  }
+
   // eslint-disable-next-line no-console
   console.log(
-    'Demo seed done: %d clients, %d consultants, %d candidates, %d missions, %d assignments, %d contracts (+ login consultant linked).',
-    clients.length, consultantSpec.length, candidates.length, missions.length, assignments.length, contracts.length,
+    'Demo seed done: %d clients, %d consultants, %d candidates, %d missions, %d assignments, %d contracts, %d job posts (+ login consultant linked).',
+    clients.length, consultantSpec.length, candidates.length, missions.length, assignments.length, contracts.length, jobPostSpecs.length,
   );
 }
 

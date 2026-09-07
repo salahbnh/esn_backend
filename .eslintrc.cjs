@@ -23,7 +23,7 @@ module.exports = {
   },
   overrides: [
     {
-      files: ['prisma/seed.ts', 'src/config/env.ts'],
+      files: ['prisma/seed.ts', 'prisma/seed-full/**/*.ts', 'src/config/env.ts'],
       rules: { 'no-console': 'off' },
     },
   ],

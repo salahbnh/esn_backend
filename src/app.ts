@@ -21,6 +21,10 @@ import { skillsRouter } from './modules/skills/skills.routes.js';
 import { jobPostsRouter } from './modules/job-posts/job-posts.routes.js';
 import { createPublicJobsRouter } from './modules/public-jobs/public-jobs.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
+import {
+  aiEvaluationsRouter,
+  applicationAiEvaluationsRouter,
+} from './modules/ai-evaluations/ai-evaluations.routes.js';
 
 export function buildApp(): Express {
   const app = express();
@@ -68,6 +72,10 @@ export function buildApp(): Express {
   app.use('/api/documents', documentsRouter);
   app.use('/api/reports', reportingRouter);
   app.use('/api/skills', skillsRouter);
+  app.use('/api/ai-evaluations', aiEvaluationsRouter);
+  // Mounted BEFORE jobPostsRouter: handles /applications/:id/ai-evaluations and
+  // lets every other /applications path fall through to the job-posts router.
+  app.use('/api/job-posts/applications', applicationAiEvaluationsRouter);
   app.use('/api/job-posts', jobPostsRouter);
   app.use('/api/users', usersRouter);
 

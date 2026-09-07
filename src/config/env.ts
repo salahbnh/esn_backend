@@ -43,6 +43,10 @@ const envSchema = z.object({
   S3_BUCKET: z.string().min(1),
   S3_REGION: z.string().min(1),
 
+  // AI evaluation (Claude) — OPTIONAL: the app boots and runs fully without it;
+  // AI endpoints return 503 AI_NOT_CONFIGURED until the key is provided.
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+
   // Public application portal (the app's only unauthenticated surface).
   // Turnstile CAPTCHA is OPTIONAL — when unset, only the honeypot gates spam (dev).
   TURNSTILE_SECRET: z.string().optional(),

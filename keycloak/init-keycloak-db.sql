@@ -1,0 +1,12 @@
+-- Runs once, on the FIRST initialisation of the postgres data volume.
+--
+-- Keycloak stores its realms, clients and users in this database instead of the
+-- embedded H2 file it uses by default. H2 lives inside the container layer, so
+-- `docker compose down` would silently delete every account created after the
+-- realm import — including all the consultants the seed provisions — while the
+-- application DB kept pointing at their now-dangling keycloakId.
+--
+-- Keeping Keycloak in Postgres means the whole system's state is in ONE volume
+-- (postgres-data), which is also what makes a backup or a machine-to-machine
+-- copy straightforward.
+CREATE DATABASE keycloak OWNER esn;

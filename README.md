@@ -1,5 +1,9 @@
 # ESN Backend
 
+> **Setting this up on a new machine? Read [INSTALL.md](./INSTALL.md)** — a complete,
+> step-by-step Windows guide (prerequisites, exact versions, data loading, logins,
+> troubleshooting). This README is the developer reference; INSTALL.md is the install path.
+
 Internal resource-management API for an ESN (IT consulting). Node 20+, TypeScript (ESM),
 Express, Prisma + PostgreSQL, Zod, Keycloak (OIDC/JWT), MinIO (S3).
 
@@ -45,6 +49,21 @@ npm run prisma:generate    # generate the Prisma client
 npm run prisma:migrate     # create/apply the dev migration (needs the DB above running)
 npm run seed               # idempotent dev seed (skills, template, 4 users)
 ```
+
+### Full demo dataset (optional)
+
+```bash
+npm run seed:full          # complete, realistic dataset — needs postgres + minio + keycloak up
+```
+
+`prisma/seed-full/` builds a whole ESN out of Tunisian identities: 8 internal users, 25 consultants,
+10 clients, 20 missions, 30 candidates, 20 contracts with their validation workflow, 10 job offers,
+40 portal applications and ~140 **real PDFs uploaded to MinIO** (so every download actually works).
+Every table is populated and every enum value appears at least once.
+
+It is **destructive** (wipes the domain tables and the `esn-documents` bucket) and **idempotent**
+(fixed PRNG seed, Keycloak accounts matched by username and reused). Every seeded account — staff and
+consultants — logs in with the password `password`; consultants use `prenom.nom@esn.local`.
 
 ## Run
 

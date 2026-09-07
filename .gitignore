@@ -7,6 +7,7 @@ coverage
 .env
 .env.*
 !.env.example
+INSTALL.md
 
 # Claude Code harness & design docs — live in the parent workspace, never track them here
 CLAUDE.md
