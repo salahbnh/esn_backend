@@ -32,14 +32,21 @@ services:
       timeout: 5s
       retries: 10
 
+  # S3-compatible object storage. MinIO stopped distributing its community images
+  # and binaries in 2025, so this runs RustFS, an S3-compatible MinIO replacement
+  # (same ports, path-style S3 API). The service keeps the `minio` name so existing
+  # commands (`docker compose up -d minio`) and docs still apply.
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: rustfs/rustfs:1.0.1
     container_name: esn-minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      RUSTFS_ACCESS_KEY: minioadmin
+      RUSTFS_SECRET_KEY: minioadmin
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # Web console
@@ -47,26 +54,28 @@ services:
       - minio-data:/data
     networks:
       - esn-net
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
-  # One-shot: waits for MinIO to be healthy, then creates the documents bucket.
-  # Exits 0 once done; safe to re-run (mb --ignore-existing is idempotent).
+  # One-shot: waits for the storage API to answer, then creates the documents
+  # bucket. Exits 0 once done; safe to re-run (an existing bucket is left alone).
   minio-setup:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: amazon/aws-cli:2.38.1
     container_name: esn-minio-setup
     depends_on:
-      minio:
-        condition: service_healthy
+      - minio
     networks:
       - esn-net
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/esn-documents &&
+      for i in $$(seq 1 30); do
+        aws --endpoint-url http://minio:9000 s3api list-buckets >/dev/null 2>&1 && break;
+        sleep 2;
+      done;
+      aws --endpoint-url http://minio:9000 s3api head-bucket --bucket esn-documents 2>/dev/null ||
+      aws --endpoint-url http://minio:9000 s3 mb s3://esn-documents &&
       echo 'Bucket esn-documents ready.';
       "
 

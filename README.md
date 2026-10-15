@@ -15,7 +15,7 @@ skills, job posts with a rate-limited public application portal, AI-assisted can
 RBAC, request validation, audit logging, error handling, storage and structured logging.
 
 **Tests:** unit tests (Vitest) plus integration tests (Supertest) that run the full middleware stack
-against a real PostgreSQL and MinIO, run on every push by GitHub Actions.
+against a real PostgreSQL and S3-compatible storage, run on every push by GitHub Actions.
 
 ## Layering (strict — dependencies flow downward only)
 
