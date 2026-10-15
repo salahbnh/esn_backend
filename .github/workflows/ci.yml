@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Typecheck, lint & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  integration:
+    name: Integration tests (PostgreSQL + MinIO)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: esn
+          POSTGRES_PASSWORD: esn
+          POSTGRES_DB: esn_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U esn -d esn_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://esn:esn@localhost:5432/esn_test?schema=public
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+          aws --endpoint-url http://localhost:9000 s3 mb s3://esn-documents
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${DATABASE_URL}|" .env
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npm run test:integration

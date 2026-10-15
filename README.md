@@ -1,16 +1,21 @@
 # ESN Backend
 
-> **Setting this up on a new machine? Read [INSTALL.md](./INSTALL.md)** — a complete,
-> step-by-step Windows guide (prerequisites, exact versions, data loading, logins,
-> troubleshooting). This README is the developer reference; INSTALL.md is the install path.
+[![CI](https://github.com/salahbnh/esn_backend/actions/workflows/ci.yml/badge.svg)](https://github.com/salahbnh/esn_backend/actions/workflows/ci.yml)
 
-Internal resource-management API for an ESN (IT consulting). Node 20+, TypeScript (ESM),
-Express, Prisma + PostgreSQL, Zod, Keycloak (OIDC/JWT), MinIO (S3).
+> **Client project.** This is the REST API of the ESN Resource Manager, a recruitment, staffing and
+> contract-management platform built for an IT consulting firm. The frontend lives in
+> [esn_frontend](https://github.com/salahbnh/esn_frontend).
 
-This is the **foundation skeleton**: full Prisma schema + cross-cutting infrastructure
-(auth, RBAC, validation, error handling, storage, logging) + a sample `health` module.
-Business modules (recruitment, consultants, staffing, missions, contracts, reporting)
-plug into this layering.
+Node 20+, TypeScript (ESM), Express, Prisma + PostgreSQL, Zod, Keycloak (OIDC/JWT), MinIO (S3).
+
+**14 business modules:** recruitment, consultants, clients, missions, staffing, contracts and
+contract templates (multi-step HR → Manager → Direction validation with generated PDFs), documents,
+skills, job posts with a rate-limited public application portal, AI-assisted candidate evaluation
+(Claude API), reporting and user administration. Cross-cutting concerns: authentication, 4-role
+RBAC, request validation, audit logging, error handling, storage and structured logging.
+
+**Tests:** unit tests (Vitest) plus integration tests (Supertest) that run the full middleware stack
+against a real PostgreSQL and MinIO, run on every push by GitHub Actions.
 
 ## Layering (strict — dependencies flow downward only)
 
